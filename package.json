@@ -1,0 +1,50 @@
+{
+  "name": "@kubohiroya/turbowarp-extension-loader",
+  "version": "0.0.0-local",
+  "private": true,
+  "type": "module",
+  "description": "Host-independent verified TurboWarp Plus extension loading core",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./project-codec": {
+      "types": "./src/project-codec.d.ts",
+      "default": "./src/project-codec.js"
+    },
+    "./session-trust": {
+      "types": "./src/session-trust.d.ts",
+      "default": "./src/session-trust.js"
+    },
+    "./webpack4": "./webpack4.cjs",
+    "./packager": {
+      "types": "./src/packager.d.ts",
+      "default": "./src/packager.js"
+    },
+    "./memory-cache": {
+      "types": "./src/memory-cache.d.ts",
+      "default": "./src/memory-cache.js"
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "@turbowarp/jszip": "3.12.0"
+  },
+  "main": "./src/index.js",
+  "module": "./src/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kubohiroya/turbowarp-extension-loader.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kubohiroya/turbowarp-plus-editor/issues/4"
+  },
+  "homepage": "https://github.com/kubohiroya/turbowarp-extension-loader#readme"
+}
