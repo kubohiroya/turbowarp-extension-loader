@@ -2,7 +2,7 @@ export type ExtensionSource = Readonly<{type: 'embedded'; path: string} | {type:
 export interface ExtensionSpec {
     readonly id: string;
     readonly source: ExtensionSource;
-    readonly execution: 'unsandboxed';
+    readonly execution: 'sandboxed' | 'unsandboxed';
     readonly sha256: string;
     readonly version?: string;
     readonly publisher?: string;

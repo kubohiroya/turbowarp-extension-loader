@@ -65,6 +65,32 @@ test('all extensions are verified and authorized before any registration, in dep
     assert.deepEqual(calls.find(call => call[0] === 'unload')[1], ['a', 'b']);
 });
 
+test('execution mode remains exact across Embedded and Remote validation, approval and registration', async () => {
+    for (const execution of ['sandboxed', 'unsandboxed']) {
+        for (const source of [{type: 'embedded', path: 'extensions/fixture.js'},
+            {type: 'remote', url: 'https://example.org/fixture.js'}]) {
+            let reviewed = 0;
+            let registered = 0;
+            const {loader} = host({trustProvider: {async authorize(code) {
+                assert.equal(code.execution, execution);
+                assert.deepEqual(code.source, source);
+                reviewed++;
+                return {allowed: true, scope: 'digest', sha256: code.sha256};
+            }}, registrar: {async begin() { return {
+                async register(code) {
+                    assert.equal(code.execution, execution);
+                    assert.equal(reviewed, 1);
+                    registered++;
+                    return {id: code.id};
+                }, async commit() {}, async rollback() {}
+            }; }, async unload() {}}});
+            await loader.load(manifest({...spec('fixture', source), execution}));
+            assert.equal(registered, 1);
+            await loader.unload();
+        }
+    }
+});
+
 test('manifest is copied and deeply frozen before asynchronous host calls', async () => {
     const input = manifest();
     const {loader} = host({trustProvider: {async authorize(code) {
@@ -88,7 +114,7 @@ test('malformed manifests cannot claim trust, alternate source, fallback or exec
         [manifest({...spec(), source: {type: 'remote', url: 'data:text/javascript,alert(1)'}}), 'INVALID_SOURCE'],
         [manifest({...spec(), source: {type: 'remote', url: 'https://user:pass@example.org/a.js'}}), 'INVALID_SOURCE'],
         [manifest({...spec(), source: {type: 'remote', url: 'https://example.org/a.js', path: 'extensions/a.js'}}), 'INVALID_MANIFEST'],
-        [manifest({...spec(), execution: 'sandboxed'}), 'INVALID_EXECUTION'],
+        [manifest({...spec(), execution: 'automatic'}), 'INVALID_EXECUTION'],
         [manifest({...spec(), sha256: 'x'.repeat(64)}), 'INVALID_DIGEST'],
         [manifest(spec('pen')), 'INVALID_ID'],
         [manifest(spec(), spec()), 'INVALID_ID'],
