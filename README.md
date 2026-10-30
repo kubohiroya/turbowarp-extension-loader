@@ -1,4 +1,4 @@
-# turbowarp-extension-loader（ローカル実装）
+# turbowarp-extension-loader
 
 [Editor Issue #4](https://github.com/kubohiroya/turbowarp-plus-editor/issues/4) の GUI 非依存コアです。独立Gitリポジトリで管理する開発パッケージで、`private: true`、`UNLICENSED` としています。既存の配布ライブラリや npm パッケージを置き換えません。
 
@@ -86,3 +86,43 @@ Node.js >=24 の組み込み test runner / Web Crypto を使い、Loader 本体�
 - `./webpack4` はGUI/Packager用の同一コアをwebpack 4でビルドするための構成補助です。
 
 実GUI、実Packager 3.14.0の生成HTML、Desktop 1.17.0の互換性はEditor側のE2Eが担当します。標準Desktopや標準WebへLoaderを無断インストールしません。標準Desktopの保存は独自Manifest/ZIPエントリを破棄することを実測しているため、保持対応エディターで保存してください。
+
+## JSファイル・URLからの作品追加API
+
+[Editor Issue #11](https://github.com/kubohiroya/turbowarp-plus-editor/issues/11) の専用UIは `./project-authoring` の `prepareExtensionAddition` を呼び出します。UIはIDとファイルまたはURLを渡すだけで、Manifest編集・URLポリシー・SHA-256計算はこのコアが担当します。
+
+```js
+import JSZip from '@turbowarp/jszip';
+import {prepareExtensionAddition} from '@kubohiroya/turbowarp-extension-loader/project-authoring';
+
+const candidate = await prepareExtensionAddition(currentSB3, {
+    id: 'myextension',
+    source: {type: 'embedded'},
+    bytes: selectedFile
+}, {fetcher, trustProvider, cache, diagnostics}, {zip: JSZip, signal});
+// For a Remote extension, use {id, source: {type: 'remote', url: httpsURL}}.
+// Apply candidate.projectBytes only after the host checks that the project is still current.
+```
+
+- JSファイルはEmbedded、HTTPS URLはRemoteとして追加します。Embeddedの既定パスは `extensions/<id>.js` です。RemoteはURLから実際に取得し、呼出側が渡したバイト列による代用を拒否します。
+- IDは拡張作者の `getInfo().id` に合わせて入力します。取り込み時にJSを評価してIDを抽出しません。実行時のregistrarが最終的なID一致を検査します。
+- 空・過大・非UTF-8のJS、予約済みID、既存ID、既存ZIPエントリへの上書きを拒否します。HTTPS・最終URL・リダイレクトは既存Loaderと同じ検証を適用します。
+- SHA-256は取得したexact bytesから自動計算します。Remoteでは、その取得結果をスナップショットとして候補検証に使います。作品保存後の再取得時にも固定ハッシュを照合するため、サーバー側の差替えを自動で信頼しません。
+- 候補作品の全拡張を既存Loaderで検証し、ホストの明示的承認を確認してから `{projectBytes, spec, manifest}` を返します。このAPIはJSを実行せず、元の作品・入力バイト列・実VMを変更しません。承認済みのセッションtrustProviderを実VMへの適用時にも共有すると、同じ内容・取得元への重複確認を避けられます。
+- 標準拡張、通常のcustom URL、既存Plus Manifest、埋め込みコード、画像等のZIPエントリ、未知metadata、配布lockを保持します。生成候補は通常ロードと同じZIP制限で再検査します。
+- VM適用はホストが所有します。プロジェクト切替・キャンセル・登録失敗の扱いと元作品の復元を実装し、UIを閉じた後や別作品に古い結果を適用しないでください。
+- 返却したSB3は通常保存と `prepareOfflinePackage` にそのまま渡せます。Remoteの同梱・外部依存の宣言・受取人の承認境界は従来のPackager APIを再利用します。起動時フラグは引き続き既定OFFです。
+
+## 一覧からの一括設定API
+
+`./project-catalog` の `prepareCatalogExtensionChanges(currentSB3, requests, ports, options)` は、カタログの選択をまとめてSB3候補へ反映します。requestは `{id, url, distribution: 'embedded' | 'remote', execution: 'sandboxed' | 'unsandboxed', dependencies?, version?}` です。JS取得・SHA-256計算・依存順・全件検証・ホスト承認を共通Loaderで行い、全件承認後に `{projectBytes, manifest}` を返します。実VMには触りません。
+
+既存Plus拡張の配布方式・実行モードを変える場合は、検証済みコードとSHA-256・発行者・バージョン・lockを保持します。Remote出力先が現在のコードを返さない場合、更新として勝手に追従せず拒否します。`readProjectAuthoringState(input, options)` は検証済みManifestを返し、UIの状態復元に使えます。これらの作品情報は実行許可ではありません。
+
+Manifestの実行要求は `sandboxed` と `unsandboxed` の両方を扱います。ホストは要求された実行モードを守るregistrarを注入してください。ローカルで検証したEditor/Packager統合ではVM所有の隔離iframeまたは承認済みホスト実行へ分岐し、サンドボックスありをサンドボックスなしへ昇格しません。認可キーは実行モードも含み、外部host policyと一致しない要求は拒否します。`prepareExtensionAddition` でも任意の `execution` を渡せ、省略時だけ従来の `unsandboxed` です。
+
+複数パッケージの候補適用、実行中拡張の所有権移行、登録失敗時の元SB3復元はGUI/VMの責務です。既存legacy拡張の移行は、VMが一時detach/commit/rollbackの所有境界を提供する場合に限ります。元サービスのdispose後に復旧できない場合も、元SB3を回復用に保持してください。
+
+## 公開範囲
+
+Loaderコアと型・ドキュメントはこのGitHubリポジトリから提供します。npmパッケージは `private: true` のままで、ホストは検証したコミットを固定して利用してください。Editor・GUI・VM・Packagerの統合実装は別のリポジトリで管理され、このコアの公開によってそれらが更新・配信されることはありません。導入時はホスト側の互換性検証と、起動時固定・既定OFFのフラグが必要です。

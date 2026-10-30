@@ -17,6 +17,14 @@
       "types": "./src/project-codec.d.ts",
       "default": "./src/project-codec.js"
     },
+    "./project-authoring": {
+      "types": "./src/project-authoring.d.ts",
+      "default": "./src/project-authoring.js"
+    },
+    "./project-catalog": {
+      "types": "./src/project-catalog.d.ts",
+      "default": "./src/project-catalog.js"
+    },
     "./session-trust": {
       "types": "./src/session-trust.d.ts",
       "default": "./src/session-trust.js"

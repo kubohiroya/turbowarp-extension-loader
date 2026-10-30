@@ -1,8 +1,9 @@
-import {createExtensionLoader, discoverManifest, LoaderError, validateManifest} from './index.js';
+import {LoaderError, validateManifest} from './index.js';
 import {createProjectIO} from './project-codec.js';
+import {collectVerifiedCodes as collect} from './verified-code.js';
+import {readPreparedProject as decodePrepared} from './project-data.js';
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder('utf-8', {fatal: true, ignoreBOM: true});
 const fail = (code, message) => { throw new LoaderError(code, message); };
 const cancelled = signal => { if (signal?.aborted) fail('CANCELLED', 'Package preparation cancelled'); };
 const own = (object, name, value) => Object.defineProperty(object, name, {
@@ -10,37 +11,6 @@ const own = (object, name, value) => Object.defineProperty(object, name, {
 });
 const digest = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
     byte => byte.toString(16).padStart(2, '0')).join('');
-
-/** Collect bytes through the same verification, policy and ordering used for execution. */
-async function collect(manifest, ports, options, signal) {
-    const result = [];
-    const loader = createExtensionLoader({...ports, registrar: {
-        async begin() {
-            const staged = [];
-            return {
-                async register(code) { staged.push(code); return {id: code.id}; },
-                async commit() { result.push(...staged); },
-                async rollback() { staged.length = 0; result.length = 0; }
-            };
-        },
-        async unload() {}
-    }}, options);
-    await loader.load(manifest, {signal});
-    await loader.unload();
-    return result;
-}
-
-async function decodePrepared(prepared, io, Zip) {
-    let project;
-    if (prepared.input instanceof Uint8Array) {
-        const archive = await Zip.loadAsync(prepared.input, {checkCRC32: false});
-        project = JSON.parse(await archive.file('project.json').async('string'));
-    } else if (typeof prepared.input === 'string') project = JSON.parse(prepared.input);
-    else project = prepared.input;
-    // The Loader-owned codec restores original bytes and unknown metadata from its private context.
-    const files = io.restoreFiles({'project.json': encoder.encode(JSON.stringify(project))}, prepared.context);
-    return {project: JSON.parse(decoder.decode(files['project.json'])), files};
-}
 
 function metadataFor(metadata, id) {
     const data = metadata && Object.hasOwn(metadata, id) ? metadata[id] : undefined;

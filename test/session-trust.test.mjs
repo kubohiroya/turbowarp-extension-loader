@@ -74,3 +74,20 @@ test('URL-only custom host policies cannot implicitly authorize embedded code', 
         hostPolicy: {canLoadExtensionFromProject: async () => true, getSandboxMode: async () => 'unsandboxed'}});
     assert.deepEqual(await provider.authorize({...code, source: {type: 'embedded', path: 'extensions/example.js'}}), {allowed: false});
 });
+
+test('sandboxed approvals stay separate and match the host sandbox policy without mode escalation', async () => {
+    let prompts = 0;
+    const provider = createSessionTrustProvider({requestApproval: async () => { prompts++; return true; }});
+    await provider.authorize(code);
+    await provider.authorize({...code, execution: 'sandboxed'});
+    await provider.authorize({...code, execution: 'sandboxed'});
+    assert.equal(prompts, 2);
+    for (const mode of ['sandboxed', 'iframe', 'worker', 'unsandboxed', undefined]) {
+        let reviewed = 0;
+        const restricted = createSessionTrustProvider({requestApproval: async () => { reviewed++; return true; },
+            hostPolicy: {getSandboxMode: async () => mode}});
+        const compatible = ['sandboxed', 'iframe', 'worker'].includes(mode);
+        assert.equal((await restricted.authorize({...code, execution: 'sandboxed'})).allowed, compatible);
+        assert.equal(reviewed, compatible ? 1 : 0);
+    }
+});

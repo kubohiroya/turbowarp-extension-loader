@@ -61,7 +61,7 @@ export function validateManifest(input, options = {}) {
         keys(spec, ['id', 'source', 'execution', 'sha256', 'version', 'publisher', 'capabilities', 'dependencies'], 'extension');
         if (!validId(spec.id) || ids.has(spec.id)) fail('INVALID_ID', 'Invalid, reserved, or duplicate extension ID', spec.id);
         ids.add(spec.id);
-        if (spec.execution !== 'unsandboxed') fail('INVALID_EXECUTION', 'Only explicit unsandboxed requests are supported', spec.id);
+        if (!['sandboxed', 'unsandboxed'].includes(spec.execution)) fail('INVALID_EXECUTION', 'An explicit sandboxed or unsandboxed request is required', spec.id);
         if (typeof spec.sha256 !== 'string' || !SHA256.test(spec.sha256)) fail('INVALID_DIGEST', 'A lowercase SHA-256 pin is required', spec.id);
         const result = {id: spec.id, source: sourceOf(spec.source), execution: spec.execution, sha256: spec.sha256};
         for (const key of ['version', 'publisher']) if (spec[key] !== undefined) result[key] = string(spec[key], key);
@@ -250,8 +250,15 @@ export function createExtensionLoader(ports, options = {}) {
         } catch (cause) {
             let error = cause instanceof LoaderError ? cause : new LoaderError('LOAD_FAILED', 'Extension load failed', undefined, cause);
             if (transaction) {
-                try { await transaction.rollback(); }
-                catch (rollbackError) { state = 'failed'; error = new LoaderError('ROLLBACK_FAILED', 'Host could not restore registration state', undefined, new AggregateError([error, rollbackError])); }
+                // Keep rejection handling outside a nested async catch: webpack 4's Babel
+                // lowering otherwise mistakes the original load error for a rollback error.
+                const rollback = await Promise.resolve().then(() => transaction.rollback())
+                    .then(() => ({ok: true}), rollbackError => ({ok: false, rollbackError}));
+                if (!rollback.ok) {
+                    state = 'failed';
+                    error = new LoaderError('ROLLBACK_FAILED', 'Host could not restore registration state', undefined,
+                        new AggregateError([error, rollback.rollbackError]));
+                }
             }
             if (state !== 'failed') state = 'idle';
             report({type: 'error', code: error.code, id: error.extensionId});

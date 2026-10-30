@@ -33,7 +33,9 @@ export function createSessionTrustProvider({requestApproval, maxApprovals = 128,
                 if (policy.mode) {
                     const mode = await policy.mode(code.source.url, {signal});
                     check(signal);
-                    if (mode !== 'unsandboxed') return Object.freeze({allowed: false});
+                    const compatible = code.execution === 'unsandboxed' ? mode === 'unsandboxed' :
+                        code.execution === 'sandboxed' && ['sandboxed', 'iframe', 'worker'].includes(mode);
+                    if (!compatible) return Object.freeze({allowed: false});
                 }
             }
             const key = JSON.stringify([code.id, code.sha256, code.execution, code.source.type,
