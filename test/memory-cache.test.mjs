@@ -1,0 +1,32 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {createMemoryContentCache} from '../src/memory-cache.js';
+const a = 'a'.repeat(64), b = 'b'.repeat(64), c = 'c'.repeat(64);
+test('cache returns private copies and expires content using a host clock', async () => {
+    let time = 10;
+    const cache = createMemoryContentCache({maxBytes: 10, ttlMs: 5, now: () => time});
+    const original = new Uint8Array([1, 2]);
+    await cache.put(a, original);
+    original[0] = 99;
+    const copy = await cache.get(a);
+    assert.deepEqual(copy, new Uint8Array([1, 2]));
+    copy[0] = 88;
+    assert.deepEqual(await cache.get(a), new Uint8Array([1, 2]));
+    time = 15;
+    assert.equal(await cache.get(a), undefined);
+    assert.deepEqual(cache.getSize(), {entries: 0, bytes: 0});
+});
+test('cache evicts least recently used content and never exceeds capacity', async () => {
+    const cache = createMemoryContentCache({maxBytes: 4});
+    await cache.put(a, new Uint8Array(2));
+    await cache.put(b, new Uint8Array(2));
+    await cache.get(a);
+    await cache.put(c, new Uint8Array(2));
+    assert.equal(await cache.get(b), undefined);
+    assert.equal((await cache.get(a)).length, 2);
+    await cache.put(c, new Uint8Array(5));
+    assert.equal(await cache.get(c), undefined);
+    assert.deepEqual(cache.getSize(), {entries: 1, bytes: 2});
+    cache.clear();
+    assert.deepEqual(cache.getSize(), {entries: 0, bytes: 0});
+});
