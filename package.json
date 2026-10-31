@@ -10,43 +10,59 @@
   },
   "exports": {
     ".": {
-      "types": "./src/index.d.ts",
-      "default": "./src/index.js"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     },
     "./project-codec": {
-      "types": "./src/project-codec.d.ts",
-      "default": "./src/project-codec.js"
+      "types": "./dist/project-codec.d.ts",
+      "default": "./dist/project-codec.js"
     },
     "./project-authoring": {
-      "types": "./src/project-authoring.d.ts",
-      "default": "./src/project-authoring.js"
+      "types": "./dist/project-authoring.d.ts",
+      "default": "./dist/project-authoring.js"
     },
     "./project-catalog": {
-      "types": "./src/project-catalog.d.ts",
-      "default": "./src/project-catalog.js"
+      "types": "./dist/project-catalog.d.ts",
+      "default": "./dist/project-catalog.js"
     },
     "./session-trust": {
-      "types": "./src/session-trust.d.ts",
-      "default": "./src/session-trust.js"
+      "types": "./dist/session-trust.d.ts",
+      "default": "./dist/session-trust.js"
     },
     "./webpack4": "./webpack4.cjs",
     "./packager": {
-      "types": "./src/packager.d.ts",
-      "default": "./src/packager.js"
+      "types": "./dist/packager.d.ts",
+      "default": "./dist/packager.js"
     },
     "./memory-cache": {
-      "types": "./src/memory-cache.d.ts",
-      "default": "./src/memory-cache.js"
+      "types": "./dist/memory-cache.d.ts",
+      "default": "./dist/memory-cache.js"
     }
   },
+  "files": [
+    "dist",
+    "memory-cache.js",
+    "packager.js",
+    "project-authoring.js",
+    "project-catalog.js",
+    "project-codec.js",
+    "session-trust.js",
+    "webpack4.cjs",
+    "docs"
+  ],
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "build": "node -e \"require('node:fs').rmSync('dist', {recursive: true, force: true})\" && tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "prepare": "npm run build"
   },
   "devDependencies": {
-    "@turbowarp/jszip": "3.12.0"
+    "@turbowarp/jszip": "3.12.0",
+    "typescript": "6.0.3"
   },
-  "main": "./src/index.js",
-  "module": "./src/index.js",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kubohiroya/turbowarp-extension-loader.git"

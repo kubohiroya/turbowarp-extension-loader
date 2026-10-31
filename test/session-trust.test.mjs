@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createSessionTrustProvider} from '../src/session-trust.js';
+import {createSessionTrustProvider} from '@kubohiroya/turbowarp-extension-loader/session-trust';
 const code = {id: 'example', sha256: 'a'.repeat(64), actualSHA256: 'a'.repeat(64), execution: 'unsandboxed',
     source: {type: 'remote', url: 'https://example.org/a.js'}, capabilities: ['vm'], dependencies: []};
 

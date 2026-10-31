@@ -1,11 +1,12 @@
-import {createExtensionLoader} from './index.js';
+import {createExtensionLoader, type AuthorizedCode, type LoaderOptions, type LoaderPorts, type Manifest} from './index.js';
 
 /** Review bytes through the runtime's policy without evaluating JavaScript. */
-export async function collectVerifiedCodes(manifest, ports, options, signal) {
-    const result = [];
+export async function collectVerifiedCodes(manifest: Manifest, ports: Omit<LoaderPorts, 'registrar'>,
+    options: LoaderOptions | undefined, signal: AbortSignal | undefined): Promise<AuthorizedCode[]> {
+    const result: AuthorizedCode[] = [];
     const loader = createExtensionLoader({...ports, registrar: {
         async begin() {
-            const staged = [];
+            const staged: AuthorizedCode[] = [];
             return {
                 async register(code) { staged.push(code); return {id: code.id}; },
                 async commit() { result.push(...staged); },

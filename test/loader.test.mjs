@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
-import {createExtensionLoader, createFetchPort, validateManifest, discoverManifest, LoaderError} from '../src/index.js';
+import {createExtensionLoader, createFetchPort, validateManifest, discoverManifest, LoaderError} from '@kubohiroya/turbowarp-extension-loader';
 
 const fixture = new Uint8Array(await readFile(new URL('./fixtures/extension.js', import.meta.url)));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');

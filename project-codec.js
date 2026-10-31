@@ -1,1 +1,1 @@
-export * from './src/project-codec.js';
+export * from './dist/project-codec.js';

@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import Zip from '@turbowarp/jszip';
-import {convertProjectSources, prepareOfflinePackage, migrateLegacyDataURL, restrictOfflineHTML} from '../src/packager.js';
+import {convertProjectSources, prepareOfflinePackage, migrateLegacyDataURL, restrictOfflineHTML} from '@kubohiroya/turbowarp-extension-loader/packager';
 const bytes = new TextEncoder().encode('\ufeff(function(Scratch){Scratch.extensions.register({getInfo(){return {id:"sample",blocks:[]}}});})(Scratch);\n');
 const sha256 = createHash('sha256').update(bytes).digest('hex');
 const spec = {id: 'sample', execution: 'unsandboxed', sha256, source: {type: 'remote', url: 'https://example.test/extension.js'}, version: '1.0.0'};

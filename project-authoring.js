@@ -1,1 +1,1 @@
-export * from './src/project-authoring.js';
+export * from './dist/project-authoring.js';

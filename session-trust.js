@@ -1,1 +1,1 @@
-export {createSessionTrustProvider} from './src/session-trust.js';
+export {createSessionTrustProvider} from './dist/session-trust.js';

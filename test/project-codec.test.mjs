@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
-import {createProjectIO, inspectZip} from '../src/project-codec.js';
+import {createProjectIO, inspectZip} from '@kubohiroya/turbowarp-extension-loader/project-codec';
 const require = createRequire(import.meta.url);
 const Zip = require('@turbowarp/jszip');
 const code = new TextEncoder().encode('Scratch.extensions.register({getInfo(){return {id:"sample"}}});');

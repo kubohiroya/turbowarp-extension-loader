@@ -2,9 +2,9 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import Zip from '@turbowarp/jszip';
-import {prepareExtensionAddition} from '../src/project-authoring.js';
-import {prepareOfflinePackage} from '../src/packager.js';
-import {createSessionTrustProvider} from '../src/session-trust.js';
+import {prepareExtensionAddition} from '@kubohiroya/turbowarp-extension-loader/project-authoring';
+import {prepareOfflinePackage} from '@kubohiroya/turbowarp-extension-loader/packager';
+import {createSessionTrustProvider} from '@kubohiroya/turbowarp-extension-loader/session-trust';
 
 const code = '\ufeffglobalThis.__authoringExecuted = true;\nScratch.extensions.register({getInfo(){return {id:"sample",blocks:[]}}});\n';
 const bytes = new TextEncoder().encode(code);

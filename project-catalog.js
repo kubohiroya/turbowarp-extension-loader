@@ -1,1 +1,1 @@
-export * from './src/project-catalog.js';
+export * from './dist/project-catalog.js';
