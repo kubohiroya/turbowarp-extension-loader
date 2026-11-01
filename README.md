@@ -12,12 +12,26 @@ npm install @kubohiroya/turbowarp-extension-loader
 
 - A schema v1 Manifest lives in `turboWarpPlus`, a non-standard field of `project.json`. This is not part of the standard SB3 specification.
 - Strict Manifest validation: unknown fields rejected, duplicate and standard extension IDs rejected, dependency ordering enforced, cyclic and missing dependencies rejected.
-- Per-extension Embedded / Remote resolution, a mandatory pinned SHA-256, UTF-8 validation, and per-code and total size limits.
+- Per-extension Embedded / Remote / Cached resolution, a mandatory pinned SHA-256, UTF-8 validation, and per-code and total size limits.
 - A SHA-256-keyed cache port. Every read re-verifies the exact bytes, and a cache hit still requires host authorization.
 - Registration starts only after explicit host authorization and only once every extension has been verified and authorized. A registration ID mismatch or a registration failure requires the host transaction to roll back.
 - Cancellation, fetch and authorization timeouts, duplicate load rejection, unload, and diagnostic events.
 
 Standard extensions, generic custom URLs and legacy Data URLs are not reinterpreted. For a project without a Manifest, no host port is called. `execution: "unsandboxed"` inside a project is a request, not a permission. Unknown fields such as `trusted` are rejected.
+
+### Source forms
+
+A `source` names where one extension's bytes live, and takes one of three forms. Added in 0.2.0, `cached` names both locations at once, so a project keeps working offline without giving up a canonical published location.
+
+| Form | Shape | Resolution order |
+| --- | --- | --- |
+| `embedded` | `{type: 'embedded', path}` | the archive entry at `path` |
+| `remote` | `{type: 'remote', url}` | an HTTPS fetch of `url` |
+| `cached` | `{type: 'cached', url, path}` | the retained copy at `path`, then an HTTPS fetch of `url` |
+
+A retained copy is not a weaker source: the Manifest pins the SHA-256, so the copy either is exactly the pinned code or the load fails with `DIGEST_MISMATCH`. That is why it may be read before the network. When the entry is absent the loader reports a `retained-copy-unavailable` diagnostic and falls back to the URL, which must still serve the pinned bytes under the same redirect and final-URL policy as `remote`. `path` follows the same `extensions/*.js` policy as `embedded`, and the cache port still takes precedence over both locations.
+
+`cached` keeps `schemaVersion: 1`, so a Manifest that does not use it stays loadable by 0.1.0. A Manifest that does use it needs 0.2.0 or newer; older versions reject it with `INVALID_SOURCE` rather than loading it in a weaker form.
 
 ## Host integration
 
@@ -153,7 +167,7 @@ const candidate = await prepareExtensionAddition(currentSB3, {
 
 ## Bulk configuration from a catalog
 
-`prepareCatalogExtensionChanges(currentSB3, requests, ports, options)` in `./project-catalog` applies a catalog selection to an SB3 candidate in one pass. A request is `{id, url, distribution: 'embedded' | 'remote', execution: 'sandboxed' | 'unsandboxed', dependencies?, version?}`. JS fetching, SHA-256 computation, dependency ordering, verification of every entry and host approval all go through the shared Loader, and `{projectBytes, manifest}` is returned once every entry is approved. The real VM is untouched.
+`prepareCatalogExtensionChanges(currentSB3, requests, ports, options)` in `./project-catalog` applies a catalog selection to an SB3 candidate in one pass. A request is `{id, url, distribution: 'embedded' | 'remote' | 'cached', execution: 'sandboxed' | 'unsandboxed', dependencies?, version?}`. JS fetching, SHA-256 computation, dependency ordering, verification of every entry and host approval all go through the shared Loader, and `{projectBytes, manifest}` is returned once every entry is approved. The real VM is untouched.
 
 When changing the distribution method or execution mode of an existing Plus extension, the verified code, SHA-256, publisher, version and lock are preserved. If the Remote destination does not return the current code, it is rejected rather than silently adopted as an update. `readProjectAuthoringState(input, options)` returns the verified Manifest and can be used to restore UI state. This project information is not an execution permission.
 

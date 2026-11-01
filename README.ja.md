@@ -12,12 +12,26 @@ npm install @kubohiroya/turbowarp-extension-loader
 
 - `project.json` の独自フィールド `turboWarpPlus` に schema v1 の Manifest を配置します。標準 SB3 仕様ではありません。
 - Manifest の厳格検証、未知フィールド拒否、重複・標準拡張 ID 拒否、依存順、循環・欠落依存拒否。
-- 拡張ごとの Embedded / Remote 解決、SHA-256 必須固定、UTF-8 検証、コードごと・全体のサイズ上限。
+- 拡張ごとの Embedded / Remote / Cached 解決、SHA-256 必須固定、UTF-8 検証、コードごと・全体のサイズ上限。
 - SHA-256 キーのキャッシュポート。読み出すたびに exact bytes を再検証し、キャッシュ利用時もホストの認可を要求します。
 - 明示的なホスト認可後、全拡張の検証・認可が揃ってから登録を始めます。登録 ID 不一致・登録失敗はホスト transaction の rollback を要求します。
 - キャンセル、取得・認可のタイムアウト、重複ロード拒否、unload、診断イベント。
 
 標準拡張・汎用カスタム URL・従来の Data URL は読み替えません。Manifest がない作品ではホストポートを呼び出しません。作品内の `execution: "unsandboxed"` は要求値であり権限ではありません。`trusted` などの未知フィールドは拒否します。
+
+### ソースの形式
+
+`source` は拡張のバイト列の所在を示し、3つの形式のいずれかを取ります。0.2.0で追加した `cached` は2つの所在を同時に示すため、正本の公開場所を保ったままオフラインでも動作します。
+
+| 形式 | 構造 | 解決順 |
+| --- | --- | --- |
+| `embedded` | `{type: 'embedded', path}` | `path` のアーカイブ内エントリ |
+| `remote` | `{type: 'remote', url}` | `url` のHTTPS取得 |
+| `cached` | `{type: 'cached', url, path}` | `path` の保持コピー → `url` のHTTPS取得 |
+
+保持コピーは弱いソースではありません。ManifestがSHA-256を固定しているため、保持コピーは固定されたコードそのものか、さもなくば `DIGEST_MISMATCH` で失敗します。だからネットワークより先に読んでよいのです。エントリが無い場合は `retained-copy-unavailable` を診断として報告してURLへ退避し、そのURLは `remote` と同じredirect・最終URL方針のもとで固定バイト列を返さなければなりません。`path` は `embedded` と同じ `extensions/*.js` 方針に従い、cache portは両方の所在より優先されます。
+
+`cached` は `schemaVersion: 1` を維持するので、使っていないManifestは0.1.0でそのまま読めます。使っているManifestは0.2.0以降を必要とし、古い版は弱い形式で読み込まずに `INVALID_SOURCE` で拒否します。
 
 ## ホスト側の接続
 
@@ -155,7 +169,7 @@ const candidate = await prepareExtensionAddition(currentSB3, {
 
 ## 一覧からの一括設定API
 
-`./project-catalog` の `prepareCatalogExtensionChanges(currentSB3, requests, ports, options)` は、カタログの選択をまとめてSB3候補へ反映します。requestは `{id, url, distribution: 'embedded' | 'remote', execution: 'sandboxed' | 'unsandboxed', dependencies?, version?}` です。JS取得・SHA-256計算・依存順・全件検証・ホスト承認を共通Loaderで行い、全件承認後に `{projectBytes, manifest}` を返します。実VMには触りません。
+`./project-catalog` の `prepareCatalogExtensionChanges(currentSB3, requests, ports, options)` は、カタログの選択をまとめてSB3候補へ反映します。requestは `{id, url, distribution: 'embedded' | 'remote' | 'cached', execution: 'sandboxed' | 'unsandboxed', dependencies?, version?}` です。JS取得・SHA-256計算・依存順・全件検証・ホスト承認を共通Loaderで行い、全件承認後に `{projectBytes, manifest}` を返します。実VMには触りません。
 
 既存Plus拡張の配布方式・実行モードを変える場合は、検証済みコードとSHA-256・発行者・バージョン・lockを保持します。Remote出力先が現在のコードを返さない場合、更新として勝手に追従せず拒否します。`readProjectAuthoringState(input, options)` は検証済みManifestを返し、UIの状態復元に使えます。これらの作品情報は実行許可ではありません。
 

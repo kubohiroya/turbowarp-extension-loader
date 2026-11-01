@@ -241,7 +241,7 @@ export function createProjectIO({zip: Zip, ...options}: ArchiveLimits & {zip?: Z
             const data = project as ProjectJSON;
             if (data.extensions !== undefined && (!Array.isArray(data.extensions) || data.extensions.some(id => typeof id !== 'string'))) throw new LoaderError('INVALID_PROJECT', 'Project extensions must be an ID array');
             if (data.extensionURLs !== undefined && (!data.extensionURLs || typeof data.extensionURLs !== 'object' || Array.isArray(data.extensionURLs))) throw new LoaderError('INVALID_PROJECT', 'Project extensionURLs must be an object');
-            for (const spec of manifest.extensions) if (spec.source.type === 'embedded' && !files.has(spec.source.path)) fail('Missing embedded extension entry');
+            for (const spec of manifest.extensions) if (spec.source.type !== 'remote' && !files.has(spec.source.path)) fail('Missing embedded extension entry');
             const context: ProjectContext = Object.freeze({});
             contexts.set(context, {manifest, project: data, files});
             const legacy: ProjectJSON = {...data};

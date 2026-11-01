@@ -1,0 +1,101 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
+import {createExtensionLoader, validateManifest, LoaderError,
+    type DiagnosticEvent, type LoaderPorts} from '@kubohiroya/turbowarp-extension-loader';
+
+const fixture = new Uint8Array(await readFile(new URL('./fixtures/extension.js', import.meta.url)));
+const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+const codeIs = (code: string) => (error: unknown) => error instanceof LoaderError && error.code === code;
+
+const url = 'https://example.test/fixture.js';
+const path = 'extensions/fixture.js';
+const cached = (source: Record<string, unknown> = {type: 'cached', url, path}) =>
+    ({schemaVersion: 1, extensions: [{id: 'fixture', source, execution: 'unsandboxed', sha256: hash(fixture)}]});
+
+type Call = unknown[];
+function host(overrides: Record<string, unknown> = {}) {
+    const calls: Call[] = [];
+    const events: DiagnosticEvent[] = [];
+    const base: LoaderPorts = {
+        embeddedReader: {async read(requested) { calls.push(['read', requested]); return fixture; }},
+        fetcher: {async fetch(requested) { calls.push(['fetch', requested]); return {bytes: fixture, finalURL: requested, redirects: []}; }},
+        trustProvider: {async authorize(code) { return {allowed: true, scope: 'digest', sha256: code.sha256}; }},
+        registrar: {
+            async begin() {
+                return {
+                    async register(code) { return {id: code.id}; },
+                    async commit() {},
+                    async rollback() {}
+                };
+            },
+            async unload() {}
+        },
+        diagnostics(event) { events.push(event); }
+    };
+    const ports = {...base, ...overrides} as unknown as LoaderPorts;
+    return {loader: createExtensionLoader(ports), calls, events};
+}
+
+test('a cached source keeps both its canonical URL and its retained path', () => {
+    const manifest = validateManifest(cached());
+    assert.deepEqual(manifest.extensions[0]!.source, {type: 'cached', url, path});
+});
+
+test('a cached source resolves from the retained copy without reaching the network', async () => {
+    const {loader, calls} = host();
+    assert.deepEqual((await loader.load(cached())).ids, ['fixture']);
+    assert.deepEqual(calls, [['read', path]], 'the retained copy alone satisfies the load');
+});
+
+test('a missing retained copy falls back to the canonical URL and says so', async () => {
+    const {loader, calls, events} = host({
+        embeddedReader: {async read() { throw new Error('no such entry'); }}
+    });
+    assert.deepEqual((await loader.load(cached())).ids, ['fixture']);
+    assert.deepEqual(calls, [['fetch', url]]);
+    assert.ok(
+        events.some(event => event.type === 'retained-copy-unavailable' && event.id === 'fixture'),
+        'the fallback is reported rather than silent'
+    );
+});
+
+test('a retained copy that is not the pinned code fails instead of being substituted', async () => {
+    const {loader} = host({
+        embeddedReader: {async read() { return new TextEncoder().encode('// different code\n'); }}
+    });
+    await assert.rejects(loader.load(cached()), codeIs('DIGEST_MISMATCH'));
+});
+
+test('a cached source follows the same URL policy as a remote one', async () => {
+    assert.throws(() => validateManifest(cached({type: 'cached', url: 'http://example.test/x.js', path})), codeIs('INVALID_SOURCE'));
+    assert.throws(() => validateManifest(cached({type: 'cached', url: `${url}#fragment`, path})), codeIs('INVALID_SOURCE'));
+    const {loader} = host({
+        embeddedReader: {async read() { throw new Error('no such entry'); }},
+        fetcher: {async fetch(requested: string) { return {bytes: fixture, finalURL: `${requested}?redirected`, redirects: []}; }}
+    });
+    await assert.rejects(loader.load(cached()), codeIs('REDIRECT_DENIED'));
+});
+
+test('a cached source follows the same retained path policy as an embedded one', () => {
+    for (const unsafe of ['../outside.js', 'extensions/../../x.js', 'elsewhere/fixture.js', 'extensions/fixture.txt']) {
+        assert.throws(() => validateManifest(cached({type: 'cached', url, path: unsafe})), codeIs('INVALID_SOURCE'));
+    }
+    // A missing field is reported by the shared field validator, as it is for the other forms.
+    assert.throws(() => validateManifest(cached({type: 'cached', url})), codeIs('INVALID_MANIFEST'));
+    assert.throws(() => validateManifest(cached({type: 'cached', path})), codeIs('INVALID_MANIFEST'));
+    assert.throws(() => validateManifest(cached({type: 'cached', url, path, extra: 1})), codeIs('INVALID_MANIFEST'));
+});
+
+test('a verified cache entry still wins over the retained copy and the URL', async () => {
+    const store = new Map([[hash(fixture), fixture]]);
+    const {loader, calls} = host({
+        cache: {
+            async get(key: string) { return store.get(key); },
+            async put() {}
+        }
+    });
+    assert.deepEqual((await loader.load(cached())).ids, ['fixture']);
+    assert.deepEqual(calls, [], 'neither the archive nor the network is read');
+});

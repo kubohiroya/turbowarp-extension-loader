@@ -7,7 +7,7 @@ import {collectVerifiedCodes} from './verified-code.js';
 export interface CatalogExtensionRequest {
     id: string;
     url: string;
-    distribution: 'embedded' | 'remote';
+    distribution: 'embedded' | 'remote' | 'cached';
     execution: ExecutionMode;
     dependencies?: string[];
     version?: string;
@@ -77,7 +77,7 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
     try {
         const seen = new Set<string>();
         const choices = requests.map(request => {
-            if (!request || !['remote', 'embedded'].includes(request.distribution) || seen.has(request.id)) {
+            if (!request || !['remote', 'embedded', 'cached'].includes(request.distribution) || seen.has(request.id)) {
                 fail('INVALID_ADDITION', 'Invalid or duplicate catalog selection', request?.id);
             }
             seen.add(request.id);
@@ -129,14 +129,19 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
             const bytes = old ? encoder.encode(old.code) : await fetchBytes((choice.source as {url: string}).url);
             const sha256 = await wait(() => digest(bytes));
             if (old && old.sha256 !== sha256) fail('CONVERSION_INTEGRITY', 'Source conversion changed bytes', choice.id);
+            const retainedPath = `extensions/${choice.id}-${sha256}.js`;
             const source: ExtensionSource = choice.distribution === 'embedded' ?
-                {type: 'embedded', path: `extensions/${choice.id}-${sha256}.js`} : choice.source;
-            if (source.type === 'remote') {
+                {type: 'embedded', path: retainedPath} : choice.distribution === 'cached' ?
+                {type: 'cached', url: (choice.source as {url: string}).url, path: retainedPath} : choice.source;
+            // A URL stays canonical for remote and cached, so it must still serve the pinned bytes.
+            if (source.type !== 'embedded') {
                 const remoteBytes = old ? await fetchBytes(source.url) : bytes;
                 if (await wait(() => digest(remoteBytes)) !== sha256) {
                     fail('DIGEST_MISMATCH', 'Remote source does not serve the currently pinned bytes', choice.id);
                 }
-            } else {
+            }
+            // Embedded and cached both retain a copy in the project.
+            if (source.type !== 'remote') {
                 if (Object.hasOwn(files, source.path) && await wait(() => digest(files[source.path])) !== sha256) {
                     fail('SOURCE_PATH_COLLISION', 'The embedded path belongs to different content', choice.id);
                 }
