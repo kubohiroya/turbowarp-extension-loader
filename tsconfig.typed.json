@@ -8,6 +8,7 @@
   "include": [
     "ts-src/src/memory-cache.ts",
     "ts-src/src/cache-gzip.ts",
-    "ts-src/src/indexeddb-cache.ts"
+    "ts-src/src/indexeddb-cache.ts",
+    "ts-src/src/loader-types.ts"
   ]
 }
