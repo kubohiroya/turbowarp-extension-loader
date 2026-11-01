@@ -151,9 +151,9 @@ export function createIndexedDBContentCache({
         },
         async getSize(): Promise<{entries: number; bytes: number}> {
             const db = await open();
-            return transaction(db, 'readonly', (store, set) => {
+            return transaction<{entries: number; bytes: number}>(db, 'readonly', (store, set) => {
                 const request = store.getAll();
-                request.onsuccess = () => set((request.result as unknown[]).reduce(
+                request.onsuccess = () => set((request.result as unknown[]).reduce<{entries: number; bytes: number}>(
                     (size, record) => {
                         if (validRecord(record)) { size.entries++; size.bytes += record.bytes.byteLength; }
                         return size;
