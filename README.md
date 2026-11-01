@@ -56,6 +56,31 @@ await loader.unload();
 
 既定値は最大64拡張、1拡張1 MiB、合計8 MiB、取得・認可30秒です。データURLやHTTPの開発モード例外はありません。標準 TurboWarp / 非対応エディターが独自 Manifest と ZIP エントリを破棄する可能性があるため、保持対応のないホストでの再保存は移行手段になりません。
 
+
+## IndexedDB 永続キャッシュ（ブラウザホスト用）
+
+`./indexeddb-cache` はリモートで取得・SHA-256 検証済みの JS バイト列を、ブラウザ再起動をまたいで再利用するための **任意の Cache Port アダプター**です。Loader コア側には IndexedDB 依存を持たせません。
+
+```js
+import {createIndexedDBContentCache}
+    from '@kubohiroya/turbowarp-extension-loader/indexeddb-cache';
+
+const cache = createIndexedDBContentCache({
+    databaseName: 'turbowarp-plus-extension-cache',
+    maxBytes: 32 * 1024 * 1024,
+    ttlMs: 30 * 24 * 60 * 60 * 1000
+});
+const loader = createExtensionLoader({...hostPorts, cache});
+// 終了・ログアウトなどの明示操作で await cache.clear() / await cache.close()
+```
+
+- キーは lowercase SHA-256 hex、値はコピーした `Uint8Array` のバイト列。既定32 MiB / 30日TTL、最終アクセス日時に基づく容量超過時LRU削除。
+- キャッシュを利用した際にも Loader コアが **取得バイト列の SHA-256 を再検証** し、毎回 trustProvider の権限判定を適用します。キャッシュが信頼判断を代行することはありません。
+- キャッシュは IndexedDB を使用できるブラウザ origin に紐付き、ブラウザのストレージ削除・プライベートモード・容量不足等で消える場合があります。ブラウザからの永続化保証はありません。
+- IndexedDB が利用できない環境では生成時に明示的に失敗します。ホストは必要に応じて `createMemoryContentCache` にフォールバックできます。ただしキャッシュ障害を無条件に無視してコード実行するのではなく、ホスト側で失敗方針を決めてください。
+- 新たな Remote バイト列を取得し保存した場合も、権限承認は毎回別途必要です。コード内から追加取得される依存リソースや外部サービスはこのキャッシュの対象外です。
+- Web/Editor はこのポートを初期化して注入するだけとし、`scratch-gui` と `turbowarp-plus-editor` に別のキャッシュロジックを実装しないでください。
+
 ## 検証
 
 ```sh
