@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `./project-catalog` releases the archive copy a replaced Embedded or Cached entry kept. Switching
+  an extension to Remote left the old `extensions/…` file in the SB3 although no Manifest entry named
+  it any more. A copy the new entry still uses (Cached ↔ Embedded) stays.
+
 ## 0.3.0
 
 Released on 2026-11-02. A bounded retry for Remote fetching, so one transient failure no longer
