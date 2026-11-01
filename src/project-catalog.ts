@@ -178,6 +178,12 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
         await wait(() => collectVerifiedCodes(manifest, {...ports, fetcher, embeddedReader: io.embeddedReader}, loaderOptions, signal));
         check();
         return Object.freeze({projectBytes, manifest});
+    } catch (error) {
+        // The selection is one operation: once an entry finally fails, nothing else about it is
+        // wanted, so stop the port work it started instead of leaving it running unobserved.
+        controller.abort(error instanceof LoaderError ? error :
+            new LoaderError('LOAD_FAILED', 'Catalog changes failed', undefined, error));
+        throw error;
     } finally {
         clearTimeout(timer);
         externalSignal?.removeEventListener('abort', abort);

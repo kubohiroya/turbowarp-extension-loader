@@ -6,6 +6,29 @@
   an extension to Remote left the old `extensions/…` file in the SB3 although no Manifest entry named
   it any more. A copy the new entry still uses (Cached ↔ Embedded) stays.
 
+## 0.3.0
+
+Released on 2026-11-02. A bounded retry for Remote fetching, so one transient failure no longer
+ends a whole load. The only change is the retry below; the fix for the copy a replaced Embedded or
+Cached entry keeps is **not** in this release, because that work is still open — it follows in
+0.3.1. New exported API and a changed default make this a minor release: a host that wants the
+previous single attempt passes `{retries: 0}`.
+
+- The fetch port retries a transient Remote failure a bounded number of times instead of failing on
+  the first one. `createFetchPort()` now wraps itself in the new `withFetchRetry(port, options)`, so
+  a host on the default port needs no change; a host that injects its own port can wrap it the same
+  way, and the core cannot impose the behaviour on it. Only a connection that could not be made and
+  an HTTP 408, 425, 429 or 5xx are repeated — `isTransientFetchFailure(error)` is the exported
+  classifier, and a `FETCH_FAILED` carries the HTTP status in its `cause`. `DEFAULT_FETCH_RETRY`
+  allows 2 retries, 400 ms of backoff doubling to a 2 s cap, and a 5 s budget measured from the
+  first attempt; the 30-second fetch and authorization deadline still covers the whole operation, so
+  the worst-case wait does not grow. A backoff wait is interrupted by the `AbortSignal` rather than
+  waited out, and `{retries: 0}` restores the previous single attempt.
+- A load or a catalog preparation that finally fails now aborts its own `AbortSignal` before
+  reporting, so port work the core has stopped waiting for does not keep running unobserved. Every
+  entry is still verified and authorized before registration starts, and a failure still rolls the
+  host transaction back.
+
 ## 0.2.1
 
 Default size limits that fit real extensions. A bundled story runtime of about 7 MiB was rejected in
