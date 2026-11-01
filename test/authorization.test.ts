@@ -1,20 +1,20 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {createExtensionLoader, isAuthorizedCode} from '@kubohiroya/turbowarp-extension-loader';
+import {createExtensionLoader, isAuthorizedCode, type AuthorizedCode} from '@kubohiroya/turbowarp-extension-loader';
 
 test('authorization proof cannot be forged with manifest fields or a copied record', async () => {
     const bytes = new TextEncoder().encode('/* approved bytes */');
     const sha256 = createHash('sha256').update(bytes).digest('hex');
-    let issued;
-    let validDuringRegistration;
+    let issued: AuthorizedCode | undefined;
+    let validDuringRegistration: boolean | undefined;
     assert.equal(isAuthorizedCode({authorization: {allowed: true, scope: 'digest', sha256}}), false);
     const loader = createExtensionLoader({
         embeddedReader: {read: async () => bytes},
-        trustProvider: {authorize: async () => ({allowed: true, scope: 'digest', sha256})},
+        trustProvider: {authorize: async () => ({allowed: true, scope: 'digest', sha256} as const)},
         registrar: {
             begin: async () => ({
-                register: async value => { issued = value; validDuringRegistration = isAuthorizedCode(value); return {id: value.id}; },
+                register: async (value: AuthorizedCode) => { issued = value; validDuringRegistration = isAuthorizedCode(value); return {id: value.id}; },
                 commit: async () => {}, rollback: async () => {}
             }), unload: async () => {}
         }

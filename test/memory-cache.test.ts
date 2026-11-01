@@ -10,7 +10,7 @@ test('cache returns private copies and expires content using a host clock', asyn
     original[0] = 99;
     const copy = await cache.get(a);
     assert.deepEqual(copy, new Uint8Array([1, 2]));
-    copy[0] = 88;
+    copy![0] = 88;
     assert.deepEqual(await cache.get(a), new Uint8Array([1, 2]));
     time = 15;
     assert.equal(await cache.get(a), undefined);
@@ -23,7 +23,7 @@ test('cache evicts least recently used content and never exceeds capacity', asyn
     await cache.get(a);
     await cache.put(c, new Uint8Array(2));
     assert.equal(await cache.get(b), undefined);
-    assert.equal((await cache.get(a)).length, 2);
+    assert.equal((await cache.get(a))!.length, 2);
     await cache.put(c, new Uint8Array(5));
     assert.equal(await cache.get(c), undefined);
     assert.deepEqual(cache.getSize(), {entries: 1, bytes: 2});

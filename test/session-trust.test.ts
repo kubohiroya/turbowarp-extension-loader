@@ -1,8 +1,13 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import type {ResolvedCode} from '@kubohiroya/turbowarp-extension-loader';
 import {createSessionTrustProvider} from '@kubohiroya/turbowarp-extension-loader/session-trust';
-const code = {id: 'example', sha256: 'a'.repeat(64), actualSHA256: 'a'.repeat(64), execution: 'unsandboxed',
-    source: {type: 'remote', url: 'https://example.org/a.js'}, capabilities: ['vm'], dependencies: []};
+const remoteURL = 'https://example.org/a.js';
+const code: ResolvedCode = {id: 'example', sha256: 'a'.repeat(64), actualSHA256: 'a'.repeat(64), execution: 'unsandboxed',
+    source: {type: 'remote', url: remoteURL}, capabilities: ['vm'], dependencies: [],
+    code: '/* example */', byteLength: 13, cached: false};
+/** The policy ports are typed for a host that always answers; these tests also try an absent mode. */
+const asMode = (mode: string | undefined) => mode as string;
 
 test('session reuse binds digest, ID, source, capabilities and claimed publisher', async () => {
     let prompts = 0;
@@ -10,7 +15,7 @@ test('session reuse binds digest, ID, source, capabilities and claimed publisher
     assert.deepEqual(await provider.authorize(code), {allowed: true, scope: 'digest', sha256: code.sha256});
     await provider.authorize({...code});
     assert.equal(prompts, 1);
-    for (const change of [{id: 'other'}, {source: {type: 'remote', url: 'https://elsewhere.org/a.js'}},
+    for (const change of [{id: 'other'}, {source: {type: 'remote', url: 'https://elsewhere.org/a.js'}} as const,
         {sha256: 'b'.repeat(64), actualSHA256: 'b'.repeat(64)}, {capabilities: ['network']}, {publisher: 'Someone'}]) {
         await provider.authorize({...code, ...change});
     }
@@ -29,14 +34,14 @@ test('denial, unverified content and cancellation never create approval', async 
 });
 
 test('approval arriving after revocation or cancellation cannot be retained', async () => {
-    let respond;
+    let respond: ((approved: boolean) => void) | undefined;
     const provider = createSessionTrustProvider({requestApproval: () => new Promise(resolve => { respond = resolve; })});
     const operation = provider.authorize(code);
-    provider.revokeAll(); respond(true);
+    provider.revokeAll(); respond!(true);
     assert.deepEqual(await operation, {allowed: false});
     const controller = new AbortController();
     const cancelled = provider.authorize(code, {signal: controller.signal});
-    controller.abort(); respond(true);
+    controller.abort(); respond!(true);
     await assert.rejects(cancelled, {code: 'CANCELLED'});
     assert.equal(provider.getApprovalCount(), 0);
 });
@@ -51,8 +56,8 @@ test('session approval storage remains bounded', async () => {
 test('custom host URL restrictions precede the permission UI and cached session approvals', async () => {
     let allowed = true, prompts = 0, policyChecks = 0;
     const provider = createSessionTrustProvider({requestApproval: async () => { prompts++; return true; },
-        hostPolicy: {async canLoadExtensionFromProject(url) {
-            assert.equal(url, code.source.url); policyChecks++; return allowed;
+        hostPolicy: {async canLoadExtensionFromProject(url: string) {
+            assert.equal(url, remoteURL); policyChecks++; return allowed;
         }}});
     assert.equal((await provider.authorize(code)).allowed, true);
     allowed = false;
@@ -64,7 +69,7 @@ test('custom host URL restrictions precede the permission UI and cached session 
 test('custom sandbox mode refuses privilege escalation before prompting', async () => {
     for (const mode of ['worker', 'iframe', undefined]) {
         const provider = createSessionTrustProvider({requestApproval: async () => { throw new Error('must not prompt'); },
-            hostPolicy: {getSandboxMode: async () => mode}});
+            hostPolicy: {getSandboxMode: async () => asMode(mode)}});
         assert.deepEqual(await provider.authorize(code), {allowed: false});
     }
 });
@@ -85,8 +90,8 @@ test('sandboxed approvals stay separate and match the host sandbox policy withou
     for (const mode of ['sandboxed', 'iframe', 'worker', 'unsandboxed', undefined]) {
         let reviewed = 0;
         const restricted = createSessionTrustProvider({requestApproval: async () => { reviewed++; return true; },
-            hostPolicy: {getSandboxMode: async () => mode}});
-        const compatible = ['sandboxed', 'iframe', 'worker'].includes(mode);
+            hostPolicy: {getSandboxMode: async () => asMode(mode)}});
+        const compatible = ['sandboxed', 'iframe', 'worker'].includes(asMode(mode));
         assert.equal((await restricted.authorize({...code, execution: 'sandboxed'})).allowed, compatible);
         assert.equal(reviewed, compatible ? 1 : 0);
     }

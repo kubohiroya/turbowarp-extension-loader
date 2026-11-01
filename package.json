@@ -1,12 +1,37 @@
 {
   "name": "@kubohiroya/turbowarp-extension-loader",
   "version": "0.1.0",
-  "type": "module",
   "description": "Host-independent verified TurboWarp Plus extension loading core",
+  "keywords": [
+    "turbowarp",
+    "scratch",
+    "extension",
+    "loader",
+    "sb3",
+    "manifest",
+    "sha-256"
+  ],
   "license": "MPL-2.0",
+  "author": {
+    "name": "Hiroya Kubo",
+    "email": "hiroya@cuc.ac.jp",
+    "url": "https://github.com/kubohiroya"
+  },
+  "type": "module",
   "engines": {
     "node": ">=26"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kubohiroya/turbowarp-extension-loader.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kubohiroya/turbowarp-plus-editor/issues/4"
+  },
+  "homepage": "https://github.com/kubohiroya/turbowarp-extension-loader#readme",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -43,7 +68,12 @@
     }
   },
   "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.ja.md",
+    "README.md",
     "dist",
+    "docs",
     "indexeddb-cache.js",
     "memory-cache.js",
     "packager.js",
@@ -51,33 +81,23 @@
     "project-catalog.js",
     "project-codec.js",
     "session-trust.js",
-    "webpack4.cjs",
-    "docs",
-    "LICENSE",
-    "README.md"
+    "webpack4.cjs"
   ],
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist', {recursive: true, force: true})\" && tsc",
-    "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test",
+    "build": "node -e \"require('node:fs').rmSync('dist', {recursive: true, force: true})\" && tsc -p tsconfig.build.json",
+    "test": "npm run build && node --test test/*.test.ts",
+    "pack:check": "npm pack --dry-run --ignore-scripts",
+    "check": "npm run typecheck && npm test && npm run pack:check",
     "prepare": "npm run build"
   },
   "devDependencies": {
     "@turbowarp/jszip": "3.12.0",
+    "@types/node": "26.6.6",
     "typescript": "6.0.3"
   },
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/kubohiroya/turbowarp-extension-loader.git"
-  },
-  "bugs": {
-    "url": "https://github.com/kubohiroya/turbowarp-plus-editor/issues/4"
-  },
-  "homepage": "https://github.com/kubohiroya/turbowarp-extension-loader#readme",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }

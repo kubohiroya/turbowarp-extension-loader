@@ -6,18 +6,22 @@ import {createProjectIO, inspectZip} from '@kubohiroya/turbowarp-extension-loade
 const require = createRequire(import.meta.url);
 const Zip = require('@turbowarp/jszip');
 const code = new TextEncoder().encode('Scratch.extensions.register({getInfo(){return {id:"sample"}}});');
-const manifest = {schemaVersion: 1, extensions: [{id: 'sample', execution: 'unsandboxed',
-    source: {type: 'embedded', path: 'extensions/sample.js'}, sha256: createHash('sha256').update(code).digest('hex')}]};
-async function fixture(project = {targets: [], extensions: ['pen', 'sample'], extensionURLs: {sample: 'https://untrusted.invalid/a.js'}, turboWarpPlus: manifest}) {
+/** Manifest fixtures are rewritten field by field, including into shapes the public types forbid. */
+const manifest: {schemaVersion: number; extensions: Record<string, unknown>[]} = {
+    schemaVersion: 1, extensions: [{id: 'sample', execution: 'unsandboxed',
+        source: {type: 'embedded', path: 'extensions/sample.js'}, sha256: createHash('sha256').update(code).digest('hex')}]};
+const hasCode = (expected: string) => (error: unknown) => (error as {code?: string}).code === expected;
+async function fixture(project: unknown = {targets: [], extensions: ['pen', 'sample'],
+    extensionURLs: {sample: 'https://untrusted.invalid/a.js'}, turboWarpPlus: manifest}) {
     return new Zip().file('project.json', JSON.stringify(project)).file('extensions/sample.js', code)
         .file('unknown/data.bin', new Uint8Array([1, 2, 3])).generateAsync({type: 'uint8array', compression: 'DEFLATE'});
 }
-const decode = bytes => JSON.parse(new TextDecoder().decode(bytes));
+const decode = (bytes: Uint8Array) => JSON.parse(new TextDecoder().decode(bytes));
 
 test('real ZIP preparation and two save paths preserve manifest, embedded bytes and unknown entries', async () => {
     const io = createProjectIO({zip: Zip});
     const prepared = await io.prepare(await fixture());
-    assert.equal(prepared.manifest.extensions[0].id, 'sample');
+    assert.equal(prepared.manifest!.extensions[0].id, 'sample');
     const legacy = await Zip.loadAsync(prepared.input);
     const project = JSON.parse(await legacy.file('project.json').async('string'));
     assert.equal(project.turboWarpPlus, undefined);
@@ -38,7 +42,7 @@ test('real ZIP preparation and two save paths preserve manifest, embedded bytes 
     const archive = new Zip().file('project.json', io.restoreJSON('{"targets":[]}', prepared.context));
     io.restoreArchive(archive, prepared.context);
     const reopened = await io.prepare(await archive.generateAsync({type: 'uint8array'}));
-    assert.equal(reopened.manifest.extensions[0].id, 'sample');
+    assert.equal(reopened.manifest!.extensions[0].id, 'sample');
 });
 
 test('manifestless project delegates exact original input; contexts cannot be forged', async () => {
@@ -59,9 +63,9 @@ test('remote-only JSON needs no ZIP dependency and malformed manifest fails clos
     const io = createProjectIO();
     const input = {targets: [], turboWarpPlus: remote};
     const result = await io.prepare(input);
-    assert.equal(result.manifest.extensions[0].source.type, 'remote');
-    assert.equal(result.input.turboWarpPlus, undefined);
-    await assert.rejects(io.prepare({turboWarpPlus: {schemaVersion: 999, extensions: []}}), error => error.code === 'UNSUPPORTED_SCHEMA');
+    assert.equal(result.manifest!.extensions[0].source.type, 'remote');
+    assert.equal((result.input as {turboWarpPlus?: unknown}).turboWarpPlus, undefined);
+    await assert.rejects(io.prepare({turboWarpPlus: {schemaVersion: 999, extensions: []}}), hasCode('UNSUPPORTED_SCHEMA'));
     await assert.rejects(io.prepare({turboWarpPlus: manifest}), /Missing embedded/);
 });
 
@@ -69,8 +73,8 @@ test('limits, cancellation, UTF-8 errors and corruption are diagnosed', async ()
     const bytes = await fixture();
     await assert.rejects(createProjectIO({zip: Zip, maxArchiveBytes: 30}).prepare(bytes), /oversized/);
     await assert.rejects(createProjectIO({zip: Zip, maxTotalBytes: 10}).prepare(bytes), /expansion/);
-    await assert.rejects(createProjectIO({zip: Zip}).prepare(bytes, {signal: AbortSignal.abort()}), error => error.code === 'CANCELLED');
-    await assert.rejects(createProjectIO().prepare(new Uint8Array([0xff])), error => error.code === 'INVALID_PROJECT');
+    await assert.rejects(createProjectIO({zip: Zip}).prepare(bytes, {signal: AbortSignal.abort()}), hasCode('CANCELLED'));
+    await assert.rejects(createProjectIO().prepare(new Uint8Array([0xff])), hasCode('INVALID_PROJECT'));
     const corrupt = new Uint8Array(bytes);
     const view = new DataView(corrupt.buffer);
     for (let i = 0; i < corrupt.length - 46; i++) {
@@ -85,17 +89,17 @@ test('limits, cancellation, UTF-8 errors and corruption are diagnosed', async ()
 });
 
 test('preflight rejects duplicate paths, traversal, ZIP64, and misleading expansion metadata before loading', async () => {
-    const bytes = await fixture();
-    const mutate = callback => {
+    const bytes: Uint8Array = await fixture();
+    const mutate = (callback: (copy: Uint8Array, view: DataView, headers: number[]) => void) => {
         const copy = new Uint8Array(bytes);
         const view = new DataView(copy.buffer);
-        const headers = [];
+        const headers: number[] = [];
         for (let i = 0; i < copy.length - 46; i++) if (view.getUint32(i, true) === 0x02014b50) headers.push(i);
         callback(copy, view, headers);
         return copy;
     };
     const badPath = mutate((copy, view, headers) => {
-        const h = headers.find(h => view.getUint16(h + 28, true) === 'unknown/data.bin'.length);
+        const h = headers.find(h => view.getUint16(h + 28, true) === 'unknown/data.bin'.length)!;
         const local = view.getUint32(h + 42, true);
         const name = new TextEncoder().encode('../evil/data.bin');
         assert.equal(name.length, view.getUint16(h + 28, true));
@@ -107,7 +111,7 @@ test('preflight rejects duplicate paths, traversal, ZIP64, and misleading expans
     const bomb = mutate((copy, view, headers) => view.setUint32(headers[0] + 24, 0x4000000, true));
     assert.throws(() => inspectZip(bomb), /expansion/);
     const duplicate = new Zip().file('project.json', '{}').file('aaaaaaaaaaaa', '1').file('bbbbbbbbbbbb', '2');
-    const duplicateBytes = await duplicate.generateAsync({type: 'uint8array'});
+    const duplicateBytes: Uint8Array = await duplicate.generateAsync({type: 'uint8array'});
     const dv = new DataView(duplicateBytes.buffer);
     for (let i = 0; i < duplicateBytes.length - 46; i++) {
         if (dv.getUint32(i, true) === 0x02014b50 && dv.getUint16(i + 28, true) === 12) {
@@ -120,7 +124,7 @@ test('preflight rejects duplicate paths, traversal, ZIP64, and misleading expans
 });
 
 test('actual inflation exceeding bounded metadata is stopped', async () => {
-    const bytes = await new Zip().file('project.json', '{}').file('payload', 'a'.repeat(10000)).generateAsync({type: 'uint8array', compression: 'DEFLATE'});
+    const bytes: Uint8Array = await new Zip().file('project.json', '{}').file('payload', 'a'.repeat(10000)).generateAsync({type: 'uint8array', compression: 'DEFLATE'});
     const view = new DataView(bytes.buffer);
     for (let i = 0; i < bytes.length - 46; i++) {
         if (view.getUint32(i, true) === 0x02014b50 && view.getUint16(i + 28, true) === 7) {

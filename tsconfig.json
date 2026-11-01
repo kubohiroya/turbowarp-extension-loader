@@ -1,10 +1,16 @@
 {
   "compilerOptions": {
     "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2022", "DOM"],
-    "types": [],
+    "types": [
+      "node"
+    ],
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
@@ -12,9 +18,37 @@
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "verbatimModuleSyntax": true,
-    "declaration": true,
-    "rootDir": "src",
-    "outDir": "dist"
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": {
+      "@kubohiroya/turbowarp-extension-loader": [
+        "./src/index.ts"
+      ],
+      "@kubohiroya/turbowarp-extension-loader/project-codec": [
+        "./src/project-codec.ts"
+      ],
+      "@kubohiroya/turbowarp-extension-loader/project-authoring": [
+        "./src/project-authoring.ts"
+      ],
+      "@kubohiroya/turbowarp-extension-loader/project-catalog": [
+        "./src/project-catalog.ts"
+      ],
+      "@kubohiroya/turbowarp-extension-loader/session-trust": [
+        "./src/session-trust.ts"
+      ],
+      "@kubohiroya/turbowarp-extension-loader/packager": [
+        "./src/packager.ts"
+      ],
+      "@kubohiroya/turbowarp-extension-loader/memory-cache": [
+        "./src/memory-cache.ts"
+      ],
+      "@kubohiroya/turbowarp-extension-loader/indexeddb-cache": [
+        "./src/indexeddb-cache.ts"
+      ]
+    }
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }
