@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.3.1
+
+Released on 2026-11-02. One fix, the one 0.3.0 said would follow here: `./project-catalog` no
+longer leaves behind the archive copy a replaced Embedded or Cached entry kept. No exported API
+and no default changes, so a host needs nothing but the version bump.
+
 - `./project-catalog` releases the archive copy a replaced Embedded or Cached entry kept. Switching
   an extension to Remote left the old `extensions/…` file in the SB3 although no Manifest entry named
   it any more. A copy the new entry still uses (Cached ↔ Embedded) stays.
