@@ -1,30 +1,37 @@
+export interface MemoryCacheOptions { maxBytes?: number; ttlMs?: number; now?: () => number }
+export interface MemoryContentCache {
+    get(key: string): Promise<Uint8Array | undefined>;
+    put(key: string, bytes: Uint8Array): Promise<void>;
+    clear(): void;
+    getSize(): Readonly<{entries: number; bytes: number}>;
+}
 /** Bounded host-session storage; the Loader re-verifies bytes on every cache hit. */
-export function createMemoryContentCache({maxBytes = 8 * 1024 * 1024, ttlMs = 60 * 60 * 1000, now = Date.now} = {}) {
+export function createMemoryContentCache({maxBytes = 8 * 1024 * 1024, ttlMs = 60 * 60 * 1000, now = Date.now}: MemoryCacheOptions = {}): Readonly<MemoryContentCache> {
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || !Number.isSafeInteger(ttlMs) || ttlMs < 1 || typeof now !== 'function') {
         throw new TypeError('Invalid cache capacity or expiry');
     }
-    const entries = new Map();
+    const entries = new Map<string, {bytes: Uint8Array; expires: number}>();
     let size = 0;
-    const remove = key => {
+    const remove = (key: string) => {
         const entry = entries.get(key);
         if (entry) { size -= entry.bytes.byteLength; entries.delete(key); }
     };
     return Object.freeze({
-        async get(key) {
+        async get(key: string) {
             const entry = entries.get(key);
             if (!entry) return undefined;
             if (entry.expires <= now()) { remove(key); return undefined; }
             entries.delete(key); entries.set(key, entry);
             return new Uint8Array(entry.bytes);
         },
-        async put(key, bytes) {
+        async put(key: string, bytes: Uint8Array) {
             if (typeof key !== 'string' || !/^[a-f0-9]{64}$/.test(key) || !(bytes instanceof Uint8Array)) {
                 throw new TypeError('Cache content requires a SHA-256 key and bytes');
             }
             remove(key);
             if (bytes.byteLength > maxBytes) return;
             for (const [candidate, entry] of entries) if (entry.expires <= now()) remove(candidate);
-            while (size + bytes.byteLength > maxBytes) remove(entries.keys().next().value);
+            while (size + bytes.byteLength > maxBytes) { const oldest = entries.keys().next().value; if (oldest === undefined) break; remove(oldest); }
             entries.set(key, {bytes: new Uint8Array(bytes), expires: now() + ttlMs});
             size += bytes.byteLength;
         },
