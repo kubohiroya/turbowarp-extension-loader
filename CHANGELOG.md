@@ -21,6 +21,10 @@ dependency.
   stores gzip-compressed bytes with bounded decompression and LRU eviction.
 - `./webpack4`: configuration helper for building the same core under webpack 4.
 - The core is TypeScript; `npm run build` emits ES2022 ESM and `dist/*.d.ts` declarations.
+- `release.yml` is the family's tag-triggered release: a pushed `v<version>` tag verifies, packs,
+  attaches the archive to the GitHub Release, publishes through a trusted publisher with
+  provenance, and points `latest` and `next` at the release. This first version is published by
+  hand, because npm cannot be given a trusted publisher for a package that does not exist yet.
 - The TypeScript layout now matches the other `@kubohiroya/turbowarp-*` packages: the tests are
   TypeScript too (`test/*.test.ts`, run on the Node.js type-stripping runtime), `tsconfig.json`
   typechecks without emitting while `tsconfig.build.json` emits, `test/tsconfig.json` covers the

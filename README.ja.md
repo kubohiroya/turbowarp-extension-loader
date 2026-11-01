@@ -92,7 +92,7 @@ const loader = createExtensionLoader({...hostPorts, cache});
 
 ## ソースとビルド
 
-ソースもテストも TypeScript で、`src/*.ts` と `test/*.test.ts` に置き、他の `@kubohiroya/turbowarp-*` パッケージと同じ構成にしています。`tsconfig.json` が出力なしの型検査、`tsconfig.build.json` がそれを継承して出力、`test/tsconfig.json` がテスト用の継承設定です。`npm run build`（`tsc -p tsconfig.build.json`）が ES2022 の ESM と型宣言を `dist/` に出力し、`exports`・`main`/`module`・webpack 4 用のルートファイル（`packager.js` など）はすべて `dist/` を指します。`dist/` は Git に含めず、Git 依存としてインストールされるときに `prepare` スクリプトがビルドします。webpack 4 では従来どおり `./webpack4` の Babel 設定が `dist/` を変換します。
+ソースもテストも TypeScript で、`src/*.ts` と `test/*.test.ts` に置き、他の `@kubohiroya/turbowarp-*` パッケージと同じ構成にしています。`tsconfig.json` が出力なしの型検査、`tsconfig.build.json` がそれを継承して出力、`test/tsconfig.json` がテスト用の継承設定です。`npm run build`（`tsc -p tsconfig.build.json`）が ES2022 の ESM と型宣言を `dist/` に出力し、`exports`・`main`/`module`・webpack 4 用のルートファイル（`packager.js` など）はすべて `dist/` を指します。`dist/` は Git に含めず、Git 依存としてインストールされるときに `prepare` スクリプトがビルドします。npm パッケージにはビルド済みの `dist/` を含めます。webpack 4 では従来どおり `./webpack4` の Babel 設定が `dist/` を変換します。
 
 型の厳しさはコアを書いたときの設定を保っています（`strict` と `noUnusedLocals`・`noUnusedParameters`・`noImplicitOverride`・`noImplicitReturns`・`noFallthroughCasesInSwitch`・`verbatimModuleSyntax`）。兄弟パッケージの一部が有効にしている `noUncheckedIndexedAccess` と `exactOptionalPropertyTypes` は、まだ有効にしていません。
 
@@ -129,7 +129,7 @@ npm run check
 
 ## JSファイル・URLからの作品追加API
 
-[Editor Issue #11](https://github.com/kubohiroya/turbowarp-plus-editor/issues/11) の専用UIは `./project-authoring` の `prepareExtensionAddition` を呼び出します。UIはIDとファイルまたはURLを渡すだけで、Manifest編集・URLポリシー・SHA-256計算はこのコアが担当します。
+`./project-authoring` の `prepareExtensionAddition` は、[Editor Issue #11](https://github.com/kubohiroya/turbowarp-plus-editor/issues/11) の専用UI（カスタム拡張画面）のために作りました。TurboWarp-Plus-Editor は2026-11-01にこの画面をやめ、拡張の入口を TurboWarp Plus の一覧（下の `./project-catalog`）だけにしたため、今は Editor から使っていません。UIはIDとファイルまたはURLを渡すだけで、Manifest編集・URLポリシー・SHA-256計算はこのコアが担当します。
 
 ```js
 import JSZip from '@turbowarp/jszip';
@@ -167,4 +167,10 @@ Manifestの実行要求は `sandboxed` と `unsandboxed` の両方を扱いま�
 
 Loaderコアと型・ドキュメントは、このGitHubリポジトリと npm パッケージ `@kubohiroya/turbowarp-extension-loader` から提供します。ホストは exact version を固定して依存してください。0.x の間は minor でも契約が変わりえます。Editor・GUI・VM・Packagerの統合実装は別のリポジトリで管理され、このコアの公開によってそれらが更新・配信されることはありません。導入時はホスト側の互換性検証と、起動時固定・既定OFFのフラグが必要です。
 
+タグ `v<version>` を push すると、`release.yml` が検証・pack・GitHub Releaseへの添付・npmへの公開（Trusted Publisher、provenance付き）を行い、`latest` と `next` をその版に向けます。初回の版だけは、npm にパッケージがまだないため Trusted Publisher を設定できません。手作業で公開してから、npmjs.com で `release.yml` を Trusted Publisher に設定します。
+
 npm への公開は、検証済みコードをホストへ配布する手段にすぎません。パッケージの入手自体が拡張コードの実行認可を与えることはなく、認可はホストの `trustProvider` が毎回判断します。
+
+## ライセンス
+
+MPL-2.0。全文は [LICENSE](LICENSE) を参照してください。

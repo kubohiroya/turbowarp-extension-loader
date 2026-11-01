@@ -68,8 +68,10 @@
     }
   },
   "files": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.ja.md",
+    "README.md",
     "dist",
     "docs",
     "indexeddb-cache.js",
