@@ -21,3 +21,13 @@ test('IndexedDB cache signals cancellation before opening a transaction', async 
     await assert.rejects(cache.get(key, {signal: controller.signal}), /cancelled/);
     await assert.rejects(cache.put(key, new Uint8Array([1]), {signal: controller.signal}), /cancelled/);
 });
+
+test('gzip cache codec round-trips JS and rejects excessive decompression', async () => {
+    const {gzipBytes, gunzipBytes} = await import('../src/cache-gzip.js');
+    const input = new TextEncoder().encode('const value = 42;\\n'.repeat(400));
+    const compressed = await gzipBytes(input);
+    assert.ok(compressed.byteLength < input.byteLength);
+    assert.deepEqual(await gunzipBytes(compressed, input.byteLength), input);
+    await assert.rejects(gunzipBytes(compressed, input.byteLength - 1), /limit/);
+    await assert.rejects(gunzipBytes(new Uint8Array([1, 2, 3]), input.byteLength), /./);
+});
