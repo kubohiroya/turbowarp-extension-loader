@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.3.0
+
+Released on 2026-11-02. A bounded retry for Remote fetching, so one transient failure no longer
+ends a whole load. The only change is the retry below; the fix for the copy a replaced Embedded or
+Cached entry keeps is **not** in this release, because that work is still open — it follows in
+0.3.1. New exported API and a changed default make this a minor release: a host that wants the
+previous single attempt passes `{retries: 0}`.
+
 - The fetch port retries a transient Remote failure a bounded number of times instead of failing on
   the first one. `createFetchPort()` now wraps itself in the new `withFetchRetry(port, options)`, so
   a host on the default port needs no change; a host that injects its own port can wrap it the same
