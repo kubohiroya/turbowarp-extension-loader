@@ -15,7 +15,7 @@ npm install @kubohiroya/turbowarp-extension-loader
 - Per-extension Embedded / Remote / Cached resolution, a mandatory pinned SHA-256, UTF-8 validation, and per-code and total size limits.
 - A SHA-256-keyed cache port. Every read re-verifies the exact bytes, and a cache hit still requires host authorization.
 - Registration starts only after explicit host authorization and only once every extension has been verified and authorized. A registration ID mismatch or a registration failure requires the host transaction to roll back.
-- Cancellation, fetch and authorization timeouts, duplicate load rejection, unload, and diagnostic events.
+- Cancellation, fetch and authorization timeouts, a bounded retry of transient Remote failures, duplicate load rejection, unload, and diagnostic events.
 
 Standard extensions, generic custom URLs and legacy Data URLs are not reinterpreted. For a project without a Manifest, no host port is called. `execution: "unsandboxed"` inside a project is a request, not a permission. Unknown fields such as `trusted` are rejected.
 
@@ -67,14 +67,32 @@ The real VM adapter is owned by `scratch-gui/src/lib/tw-plus-extension-registrar
 - The core does not evaluate JS. Evaluation privileges and VM internal APIs stay with the host.
 - Rollback is a guarantee about the host's extension registration state. It cannot undo DOM, network or other side effects of privileged JS that has already been evaluated. Approving that the code is safe remains a separate decision.
 - The initial version rejects HTTP for Remote, URLs carrying credentials, fragments and redirects. A successful HTTPS fetch alone does not authorize anything.
-- `createFetchPort()` disables redirects, sends no credentials, sends no referrer, and enforces the real size limit on the stream. A fetch refused by CORS / CSP / offline conditions is preserved in the `cause` of `LOAD_FAILED`. Detailed classification of network-layer failures is left to `cause`; CORS and CSP are verified by real-browser E2E tests on the Editor side.
-- An injected fetch port must return `finalURL` and an explicitly empty `redirects`. The port itself is a boundary implemented by the trusted host.
+- `createFetchPort()` disables redirects, sends no credentials, sends no referrer, and enforces the real size limit on the stream. A fetch refused by CORS / CSP / offline conditions is preserved in the `cause` of `LOAD_FAILED`, and a failed HTTP response keeps its status there. Detailed classification of network-layer failures is left to `cause`; CORS and CSP are verified by real-browser E2E tests on the Editor side.
+- An injected fetch port must return `finalURL` and an explicitly empty `redirects`. The port itself is a boundary implemented by the trusted host, which is where retrying lives as well; see below.
 - Fetching and authorization time out even against a port that never responds. Registration waits for completion before rolling back, even after cancellation. To avoid a race between a late-completing registration and a rollback, a registration port that does not respond to `AbortSignal` cannot guarantee that an in-flight registration finishes in bounded time.
 - Cache capacity, invalidation, persistence and provenance logging belong to the host's port. A corrupted cache is never silently ignored in favour of switching to Remote.
 - `./packager` provides Embedded / Remote conversion, Data URL migration with explicit approval, lock and license metadata preservation, and offline SB3 preparation. An extension with external dependent resources is rejected rather than guessed into a bundle. Signature and publisher key pinning can be added by the host; the initial implementation is session approval bound to content and source.
 - The ZIP implementation is injected through `createProjectIO({zip: JSZip})`. The core codec inspects the ZIP central directory directly and validates duplicates, paths and declared capacity before checking the real expanded size and CRC32 of the stream. An externally implemented archive port needs equivalent validation.
 
 The defaults are at most 64 extensions, 16 MiB per extension, 64 MiB in total, and 30 seconds for fetching and authorization. The per-extension and total defaults equal the project codec's per-entry and expansion limits, so any extension file a project can carry is also one the Loader reads; a host can lower them through its loader options. There is no development-mode exception for Data URLs or HTTP. Because standard TurboWarp and unsupported editors may discard the non-standard Manifest and ZIP entries, re-saving in a host without preservation support is not a migration path.
+
+### Retrying a transient Remote failure
+
+Retrying lives at the fetch port. `createFetchPort()` wraps itself in `withFetchRetry()`, so a host on the default port needs no change, and a host that injects its own port can wrap it the same way with `withFetchRetry(hostPort)`. The core does not retry inside its own resolution loop, for two reasons: retrying is a transport policy, while the other failures in that loop — a digest mismatch, a corrupt cache entry, a trust refusal — must never be repeated; and the core cannot classify what an arbitrary port throws, so retrying there would either guess or force every existing port into a new error contract. **The consequence is that the core cannot impose this on an injected port.** A host that implements its own port decides for itself, and `./project-catalog` and `./project-authoring` retry exactly as much as the port they are handed does.
+
+| Failure | Retried | Not retried |
+| --- | --- | --- |
+| An HTTP response | 408, 425, 429 and every 5xx | every other 4xx, 404 among them: the answer is that it is not there |
+| No response at all | a connection that could not be made | an `AbortSignal` abort, the deadline included |
+| Before the request | — | a rejected URL, HTTP, credentials or a fragment (`INVALID_SOURCE`) |
+| After the response | — | a redirect or an unproven final URL (`FETCH_FAILED`, `REDIRECT_DENIED`), the byte limit (`INVALID_BYTES`), a digest mismatch, a corrupt cache entry, a trust refusal |
+| A cache hit | — | a hash-pinned entry never contacts the CDN, so there is nothing to retry |
+
+`isTransientFetchFailure(error)` is the exported classifier, and a `FETCH_FAILED` from `createFetchPort()` keeps the HTTP status in its `cause` so a wrapper can read it. One case cannot be classified: in a browser, `fetch()` rejects with the same `TypeError` whether the connection could not be made, DNS failed, the browser is offline, or CORS or CSP refused the request. That is deliberate in the specification. A CORS or CSP refusal is therefore retried along with the connection failure this was written for, which is affordable only because the budget is small — and is why it is small.
+
+**The wait is bounded twice.** `DEFAULT_FETCH_RETRY` allows 2 retries, backing off 400 ms and then 800 ms, and starts no attempt more than 5 seconds after the first one; the budget covers the backoff, so a slow first attempt spends it. Above that, the 30-second fetch and authorization deadline still covers the whole operation — every extension's fetch, authorization and registration under one timer, not one timer per fetch. Retrying therefore does not multiply the deadline: 30 seconds was the worst case before this and remains the worst case after it, and the budget only decides how much of those 30 seconds one URL may spend asking again. A backoff wait is interrupted by the signal rather than waited out, so cancelling stays immediate. `createFetchPort(fetchImpl, {retries: 0})` restores the previous single attempt, and `onRetry` reports every wait so a host can show progress.
+
+Giving up is final. Registration starts only once every entry is verified and authorized, so one entry whose retries are spent ends the whole operation: the entries after it are never fetched, because entries are resolved one at a time; the operation's `AbortSignal` is aborted so port work it no longer waits for stops; the host transaction rolls back and the original project is restored. From there the person waiting is the retry mechanism, and the host asks them to open the project or add the extension again. The asymmetry with build-time catalog generation, where nobody is watching and a retry has to absorb the failure, is deliberate.
 
 ## IndexedDB persistent cache (for browser hosts)
 
@@ -135,6 +153,7 @@ Unsupported formats are ZIP64, multidisk, encryption, compression other than STO
 - `isAuthorizedCode(value)` identifies only an authorization trail issued by the core and currently being registered. Copies and forgeries from project data are rejected, and the trail expires when the transaction ends.
 - `createSessionTrustProvider` in `./session-trust` keeps approval bound to id, digest, source, version, publisher, capabilities and dependencies. It applies the explicit external host URL / execution policy before the UI every time, and rejects an Embedded request it cannot decide.
 - `createMemoryContentCache` in `./memory-cache` provides copying, capacity (32 MiB by default, two extensions of the largest default size), TTL and LRU, and the core re-verifies the content even on a hit.
+- `withFetchRetry(port, options)` wraps any fetch port in the bounded retry described above, `isTransientFetchFailure(error)` is the classifier it applies, and `DEFAULT_FETCH_RETRY` holds the defaults (2 retries, 400 ms of backoff doubling to a 2 s cap, a 5 s budget).
 - `./webpack4` is a configuration helper for building the same core with webpack 4 for the GUI and Packager.
 
 Compatibility with the real GUI, with the HTML generated by the real Packager 3.14.0, and with Desktop 1.17.0 is covered by E2E tests on the Editor side. Do not install the Loader into standard Desktop or standard Web without permission. Saving in standard Desktop has been measured to discard the non-standard Manifest and ZIP entries, so save in an editor that preserves them.

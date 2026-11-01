@@ -35,6 +35,15 @@ export interface OperationOptions {signal?: AbortSignal}
 export interface ReadOptions {signal: AbortSignal; maxBytes: number}
 export interface FetchResult {bytes: Uint8Array; finalURL: string; redirects: readonly string[]}
 export interface FetchPort {fetch(url: string, options: ReadOptions): Promise<FetchResult>}
+export interface FetchRetryOptions {
+    /** Attempts after the first one; 0 turns retrying off. */
+    retries?: number;
+    baseDelayMs?: number;
+    maxDelayMs?: number;
+    /** Wall clock since the first attempt; no further attempt starts once it is spent. */
+    budgetMs?: number;
+    onRetry?: (attempt: Readonly<{url: string; attempt: number; delayMs: number; error: unknown}>) => void;
+}
 export interface RegistrationTransaction {
     register(code: AuthorizedCode, options: {signal: AbortSignal}): Promise<{id: string}>;
     commit(options: {signal: AbortSignal}): Promise<void>;
@@ -210,12 +219,105 @@ async function guarded<T>(task: () => T | PromiseLike<T>, signal: AbortSignal): 
     finally { signal.removeEventListener('abort', abort); }
 }
 
-/** Browser fetch port rejects redirects and streams with a byte limit. */
-export function createFetchPort(fetchImpl: typeof fetch = globalThis.fetch): FetchPort {
+/** A backoff wait the signal interrupts, so a cancelled load never sits out its remaining delay. */
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+    checkSignal(signal);
+    return new Promise<void>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout>;
+        const abort = (): void => {
+            clearTimeout(timer);
+            try { checkSignal(signal); } catch (error) { reject(error); }
+        };
+        timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, ms);
+        signal.addEventListener('abort', abort, {once: true});
+    });
+}
+
+/**
+ * The bounded retry the default fetch port applies.
+ *
+ * A load already has one deadline (`timeoutMs`, 30 seconds by default) covering every extension's
+ * fetch, authorization and registration, so retrying can never extend the wait a person already
+ * faces. This budget is the separate, tighter ceiling on how long retrying one URL may go on:
+ * 400 ms then 800 ms of backoff, and no attempt begins more than 5 seconds after the first one.
+ */
+export const DEFAULT_FETCH_RETRY = Object.freeze({retries: 2, baseDelayMs: 400, maxDelayMs: 2000, budgetMs: 5000});
+
+const transientStatus = (status: number): boolean => status === 408 || status === 425 || status === 429 || status >= 500;
+
+/**
+ * Whether asking again could plausibly answer differently.
+ *
+ * A `FETCH_FAILED` carrying an HTTP status is an answer from the server, and only a request
+ * timeout, a too-early retry, a rate limit and a server-side error are worth repeating; 404 is the
+ * answer that it is not there. Every other `LoaderError` is a policy or validation refusal — a
+ * redirect, a byte limit, a rejected URL, a cancellation — and repeating it returns the refusal.
+ *
+ * A rejection that is not a `LoaderError` is a transport failure with no response at all. In a
+ * browser one `TypeError` covers a connection that could not be made, DNS failure and being
+ * offline, but also a CORS or CSP refusal: fetch deliberately makes them indistinguishable, so a
+ * permanent refusal is retried along with the connection failure this was written for. That is
+ * affordable only because the budget is small, and it is why the budget is small.
+ */
+export function isTransientFetchFailure(error: unknown): boolean {
+    if (error instanceof LoaderError) {
+        const status = (error.cause as {status?: unknown} | null | undefined)?.status;
+        return error.code === 'FETCH_FAILED' && typeof status === 'number' && transientStatus(status);
+    }
+    // An abort is the host's own decision or the deadline's, never something to ask again.
+    return !(error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError'));
+}
+
+/**
+ * Retry a transient Remote failure a bounded number of times, then give the failure up.
+ *
+ * Retrying belongs to the fetch port and not to the loader's own loop: it is a transport policy,
+ * while the loop's other failures — a digest mismatch, a corrupt cache entry, a trust refusal —
+ * must never be repeated, and the core cannot classify what an arbitrary port throws. So the core
+ * cannot impose this on an injected port: a host that implements its own port keeps full control
+ * and gets no retry unless it asks, either by wrapping its port in this helper or by retrying
+ * inside it. `createFetchPort()` wraps itself, so a host on the default port needs no change.
+ *
+ * Giving up is final here. One entry that finally fails ends the whole operation, because
+ * registration starts only once every entry is verified and authorized; the person waiting is the
+ * retry mechanism from that point on, and the host asks them to try again.
+ */
+export function withFetchRetry(port: FetchPort, options: FetchRetryOptions = {}): FetchPort {
+    if (typeof port?.fetch !== 'function') fail('INVALID_PORT', 'A fetch port is required to retry');
+    const {retries, baseDelayMs, maxDelayMs, budgetMs} = {...DEFAULT_FETCH_RETRY, ...options};
+    for (const [key, value] of Object.entries({retries, baseDelayMs, maxDelayMs, budgetMs})) {
+        if (!Number.isSafeInteger(value) || value < 0) fail('INVALID_OPTIONS', `Invalid ${key}`);
+    }
     return Object.freeze({
+        async fetch(url: string, readOptions: ReadOptions): Promise<FetchResult> {
+            const started = Date.now();
+            for (let attempt = 0; ; attempt++) {
+                try { return await port.fetch(url, readOptions); }
+                catch (error) {
+                    const delayMs = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
+                    // The budget covers the waiting too, so no attempt starts once it is spent.
+                    if (attempt >= retries || Date.now() - started + delayMs > budgetMs || !isTransientFetchFailure(error)) throw error;
+                    try { options.onRetry?.(Object.freeze({url, attempt: attempt + 1, delayMs, error})); }
+                    catch { /* Progress reporting must not change the outcome. */ }
+                    await delay(delayMs, readOptions.signal);
+                }
+            }
+        }
+    });
+}
+
+/**
+ * Browser fetch port rejects redirects and streams with a byte limit, and retries a transient
+ * failure within `DEFAULT_FETCH_RETRY`. Pass `{retries: 0}` for a single attempt.
+ */
+export function createFetchPort(fetchImpl: typeof fetch = globalThis.fetch, retry: FetchRetryOptions = {}): FetchPort {
+    return withFetchRetry(Object.freeze({
         async fetch(url: string, {signal, maxBytes}: ReadOptions): Promise<FetchResult> {
             const response = await fetchImpl(remoteURL(url), {signal, redirect: 'error', credentials: 'omit', referrerPolicy: 'no-referrer'});
-            if (!response.ok || response.redirected || response.type === 'opaque' || response.url !== remoteURL(url)) fail('FETCH_FAILED', 'Remote response is unavailable or redirected');
+            if (response.redirected || response.type === 'opaque' || response.url !== remoteURL(url)) fail('FETCH_FAILED', 'Remote response is unavailable or redirected');
+            // The status is kept on the cause so a wrapper can tell a rate limit or a server-side
+            // error from an answer such as 404, which repeating would only ask for again.
+            if (!response.ok) throw new LoaderError('FETCH_FAILED', `Remote response is unavailable (HTTP ${response.status})`, undefined, Object.freeze({status: response.status}));
             const declared = response.headers.get('content-length');
             if (declared !== null && Number(declared) > maxBytes) fail('INVALID_BYTES', 'Remote extension exceeds byte limit');
             if (!response.body) fail('FETCH_FAILED', 'Remote response has no readable body');
@@ -240,7 +342,7 @@ export function createFetchPort(fetchImpl: typeof fetch = globalThis.fetch): Fet
             for (const part of parts) { bytes.set(part, offset); offset += part.byteLength; }
             return {bytes, finalURL: response.url, redirects: []};
         }
-    });
+    }), retry);
 }
 
 /** The host owns all ports, especially trust decisions and privileged execution. */
@@ -354,6 +456,9 @@ export function createExtensionLoader(ports: LoaderPorts, options: LoaderOptions
                 }
             }
             if (state !== 'failed') state = 'idle';
+            // Rollback is done, so nothing of this operation should still be running on its signal:
+            // stop the port work the core has already stopped waiting for, retries included.
+            controller.abort(error);
             report({type: 'error', code: error.code, id: error.extensionId});
             throw error;
         } finally {
