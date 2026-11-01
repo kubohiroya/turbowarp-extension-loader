@@ -67,14 +67,16 @@ import {createIndexedDBContentCache}
 
 const cache = createIndexedDBContentCache({
     databaseName: 'turbowarp-plus-extension-cache',
-    maxBytes: 32 * 1024 * 1024,
+    maxBytes: 32 * 1024 * 1024, // compressed storage quota
+    maxDecompressedBytes: 8 * 1024 * 1024,
     ttlMs: 30 * 24 * 60 * 60 * 1000
 });
 const loader = createExtensionLoader({...hostPorts, cache});
 // 終了・ログアウトなどの明示操作で await cache.clear() / await cache.close()
 ```
 
-- キーは lowercase SHA-256 hex、値はコピーした `Uint8Array` のバイト列。既定32 MiB / 30日TTL、最終アクセス日時に基づく容量超過時LRU削除。
+- キーは lowercase SHA-256 hex。**保存する値は生JSではなく gzip 圧縮されたバイト列**（format: `gzip-v1`、元サイズを併記）。取得時に展開して Loader に返します。既定32 MiB は**圧縮後の総保存容量**、展開後の最大サイズは8 MiB、TTLは30日。容量超過時は最終アクセス順LRUで削除します。旧形式の非圧縮エントリは読み込まず削除します。
+- 展開は出力サイズを制限し、改ざん・gzip破損や展開超過を拒否します。ブラウザの `CompressionStream` / `DecompressionStream` が必要です。非対応環境で生JSへ黙って切り替えて保存することはありません。
 - キャッシュを利用した際にも Loader コアが **取得バイト列の SHA-256 を再検証** し、毎回 trustProvider の権限判定を適用します。キャッシュが信頼判断を代行することはありません。
 - キャッシュは IndexedDB を使用できるブラウザ origin に紐付き、ブラウザのストレージ削除・プライベートモード・容量不足等で消える場合があります。ブラウザからの永続化保証はありません。
 - IndexedDB が利用できない環境では生成時に明示的に失敗します。ホストは必要に応じて `createMemoryContentCache` にフォールバックできます。ただしキャッシュ障害を無条件に無視してコード実行するのではなく、ホスト側で失敗方針を決めてください。
