@@ -6,7 +6,7 @@
   "description": "Host-independent verified TurboWarp Plus extension loading core",
   "license": "UNLICENSED",
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "exports": {
     ".": {
