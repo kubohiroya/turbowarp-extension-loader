@@ -3,6 +3,7 @@ import {LoaderError, validateManifest, type ExecutionMode, type ExtensionSpec, t
 import {createProjectIO, type ArchiveLimits, type ZipConstructor} from './project-codec.js';
 import {readPreparedProject} from './project-data.js';
 import {collectVerifiedCodes} from './verified-code.js';
+import {DEFAULT_LOADER_LIMITS} from './limits.js';
 
 export type ExtensionAdditionRequest = {
     id: string;
@@ -57,7 +58,7 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         fail('INVALID_ADDITION', 'An extension ID and file or URL source are required');
     }
     if (typeof ports?.trustProvider?.authorize !== 'function') fail('INVALID_PORT', 'An explicit host trust provider is required');
-    const limits = {maxBytes: 1024 * 1024, timeoutMs: 30000, ...loaderOptions};
+    const limits = {maxBytes: DEFAULT_LOADER_LIMITS.maxBytes, timeoutMs: DEFAULT_LOADER_LIMITS.timeoutMs, ...loaderOptions};
     for (const key of ['maxBytes', 'maxTotalBytes', 'maxExtensions', 'timeoutMs'] as const) {
         const value = limits[key];
         if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) fail('INVALID_OPTIONS', `Invalid ${key}`);

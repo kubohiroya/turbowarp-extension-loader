@@ -247,7 +247,7 @@ test('unproven fetch responses, oversized bodies and invalid UTF-8 never reach t
         [{bytes: content('sample'), finalURL: url('sample')}, 'REDIRECT_DENIED'],
         [{bytes: content('sample'), finalURL: url('other'), redirects: []}, 'REDIRECT_DENIED'],
         [{bytes: content('sample'), finalURL: url('sample'), redirects: [url('other')]}, 'REDIRECT_DENIED'],
-        [{bytes: new Uint8Array(1024 * 1024 + 1), finalURL: url('sample'), redirects: []}, 'INVALID_BYTES'],
+        [{bytes: new Uint8Array(16 * 1024 * 1024 + 1), finalURL: url('sample'), redirects: []}, 'INVALID_BYTES'],
         [{bytes: new Uint8Array([0xff, 0xfe]), finalURL: url('sample'), redirects: []}, 'INVALID_ENCODING']
     ];
     for (const [response, code] of cases) {

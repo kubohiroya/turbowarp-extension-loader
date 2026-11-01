@@ -95,6 +95,17 @@ test('explicit Data URL migration pins, validates and asks host approval instead
     await assert.rejects(migrateLegacyDataURL({id: 'sample', url: 'data:text/javascript;base64,%%%%', sha256}, ports()), {code: 'INVALID_ENCODING'});
 });
 
+test('Data URL migration accepts an extension of several MiB and refuses one past the default size', async () => {
+    const large = new Uint8Array(5 * 1024 * 1024).fill(0x78);
+    large.set(bytes);
+    large.set(new TextEncoder().encode('//'), bytes.length);
+    const url = `data:text/javascript;base64,${Buffer.from(large).toString('base64')}`;
+    const digest = createHash('sha256').update(large).digest('hex');
+    assert.equal((await migrateLegacyDataURL({id: 'sample', url, sha256: digest}, ports())).bytes.length, large.length);
+    const oversized = `data:text/javascript;base64,${'A'.repeat(Math.ceil(16 * 1024 * 1024 / 3) * 4 + 1024)}`;
+    await assert.rejects(migrateLegacyDataURL({id: 'sample', url: oversized, sha256: digest}, ports()), {code: 'INVALID_SOURCE'});
+});
+
 test('archive conversion retains unrelated data and cancellation prevents approval', async () => {
     const archive = new Zip().file('project.json', JSON.stringify(project())).file('unknown/data.bin', new Uint8Array([3, 2, 1]));
     const result = await prepareOfflinePackage(await archive.generateAsync({type: 'uint8array'}), ports(), offline());

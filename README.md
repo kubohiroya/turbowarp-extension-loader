@@ -74,7 +74,7 @@ The real VM adapter is owned by `scratch-gui/src/lib/tw-plus-extension-registrar
 - `./packager` provides Embedded / Remote conversion, Data URL migration with explicit approval, lock and license metadata preservation, and offline SB3 preparation. An extension with external dependent resources is rejected rather than guessed into a bundle. Signature and publisher key pinning can be added by the host; the initial implementation is session approval bound to content and source.
 - The ZIP implementation is injected through `createProjectIO({zip: JSZip})`. The core codec inspects the ZIP central directory directly and validates duplicates, paths and declared capacity before checking the real expanded size and CRC32 of the stream. An externally implemented archive port needs equivalent validation.
 
-The defaults are at most 64 extensions, 1 MiB per extension, 8 MiB in total, and 30 seconds for fetching and authorization. There is no development-mode exception for Data URLs or HTTP. Because standard TurboWarp and unsupported editors may discard the non-standard Manifest and ZIP entries, re-saving in a host without preservation support is not a migration path.
+The defaults are at most 64 extensions, 16 MiB per extension, 64 MiB in total, and 30 seconds for fetching and authorization. The per-extension and total defaults equal the project codec's per-entry and expansion limits, so any extension file a project can carry is also one the Loader reads; a host can lower them through its loader options. There is no development-mode exception for Data URLs or HTTP. Because standard TurboWarp and unsupported editors may discard the non-standard Manifest and ZIP entries, re-saving in a host without preservation support is not a migration path.
 
 ## IndexedDB persistent cache (for browser hosts)
 
@@ -89,13 +89,13 @@ import {createIndexedDBContentCache}
 const cache = createIndexedDBContentCache({
     databaseName: 'turbowarp-plus-extension-cache',
     maxBytes: 32 * 1024 * 1024, // compressed storage quota
-    maxDecompressedBytes: 8 * 1024 * 1024
+    maxDecompressedBytes: 16 * 1024 * 1024
 });
 const loader = createExtensionLoader({...hostPorts, cache});
 // On an explicit action such as exit or sign-out: await cache.clear() / await cache.close()
 ```
 
-- The key is a lowercase SHA-256 hex digest. **The stored value is gzip-compressed bytes, not raw JS** (format `gzip-v1`, with the original size recorded alongside). It is decompressed on read and returned to the Loader. The default 32 MiB is the **total compressed storage quota**, the maximum decompressed size is 8 MiB, and entries do not expire. On quota overflow, entries are evicted in least-recently-accessed order. Uncompressed entries in the old format are deleted rather than read.
+- The key is a lowercase SHA-256 hex digest. **The stored value is gzip-compressed bytes, not raw JS** (format `gzip-v1`, with the original size recorded alongside). It is decompressed on read and returned to the Loader. The default 32 MiB is the **total compressed storage quota**, the maximum decompressed size is 16 MiB (the per-extension default), and entries do not expire. On quota overflow, entries are evicted in least-recently-accessed order. Uncompressed entries in the old format are deleted rather than read.
 - Decompression bounds the output size and rejects tampering, gzip corruption and oversized expansion. The browser's `CompressionStream` / `DecompressionStream` is required. The adapter never silently falls back to storing raw JS in an unsupported environment.
 - Even on a cache hit, the Loader core **re-verifies the SHA-256 of the returned bytes** and applies the `trustProvider` decision every time. The cache never stands in for a trust decision.
 - The cache is bound to a browser origin that can use IndexedDB, and may disappear when the browser clears storage, in private mode, when storage runs out, and so on. The browser offers no persistence guarantee.
@@ -128,13 +128,13 @@ Wire the Loader inside a host feature flag that is fixed at startup and off by d
 
 `prepare` accepts a JSON object, a string, UTF-8 bytes, an ArrayBuffer, a Blob and an SB3 ZIP, and returns `{manifest, input, context}`. When a Manifest is present, the core validates it and strips `extensionURLs` for Plus IDs in legacy input to prevent automatic URL execution. The IDs themselves remain for the GUI's registration hook. On save it restores the Manifest, the original Plus URL metadata, embedded bytes, unknown ZIP entries and unknown top-level metadata. `restoreArchive` assumes the GUI's `toJSON` hook has already restored `project.json`.
 
-Unsupported formats are ZIP64, multidisk, encryption, compression other than STORE/DEFLATE, non-ASCII entry names that are not UTF-8, and the Unicode path extra field. The default limits are 64 MiB for the archive and for total expansion, 16 MiB per entry, 4 MiB for `project.json`, 4096 entries, and a compression ratio of 1000. The limits are configurable through the host's startup settings. A ZIP without a Manifest goes through the same safety checks, and the original input is returned unchanged once it passes. As a result, an unsupported ZIP that the previous VM accepted is rejected while the flag is on. With the flag off, the codec is not called at all.
+Unsupported formats are ZIP64, multidisk, encryption, compression other than STORE/DEFLATE, non-ASCII entry names that are not UTF-8, and the Unicode path extra field. The default limits are 64 MiB for the archive and for total expansion, 16 MiB per entry, 32 MiB for `project.json`, 4096 entries, and a compression ratio of 1000. The limits are configurable through the host's startup settings. A ZIP without a Manifest goes through the same safety checks, and the original input is returned unchanged once it passes. As a result, an unsupported ZIP that the previous VM accepted is rejected while the flag is on. With the flag off, the codec is not called at all.
 
 ## Additional host-facing API
 
 - `isAuthorizedCode(value)` identifies only an authorization trail issued by the core and currently being registered. Copies and forgeries from project data are rejected, and the trail expires when the transaction ends.
 - `createSessionTrustProvider` in `./session-trust` keeps approval bound to id, digest, source, version, publisher, capabilities and dependencies. It applies the explicit external host URL / execution policy before the UI every time, and rejects an Embedded request it cannot decide.
-- `createMemoryContentCache` in `./memory-cache` provides copying, capacity, TTL and LRU, and the core re-verifies the content even on a hit.
+- `createMemoryContentCache` in `./memory-cache` provides copying, capacity (32 MiB by default, two extensions of the largest default size), TTL and LRU, and the core re-verifies the content even on a hit.
 - `./webpack4` is a configuration helper for building the same core with webpack 4 for the GUI and Packager.
 
 Compatibility with the real GUI, with the HTML generated by the real Packager 3.14.0, and with Desktop 1.17.0 is covered by E2E tests on the Editor side. Do not install the Loader into standard Desktop or standard Web without permission. Saving in standard Desktop has been measured to discard the non-standard Manifest and ZIP entries, so save in an editor that preserves them.

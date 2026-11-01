@@ -185,7 +185,7 @@ test('cancellation and a stalled fetch timeout do not change input or prompt', a
 test('oversized Blob is rejected without reading it, and total byte limits include existing extensions', async () => {
     let read = false;
     class Oversized extends Blob {
-        override get size() { return 1024 * 1024 + 1; }
+        override get size() { return 16 * 1024 * 1024 + 1; }
         override arrayBuffer(): Promise<ArrayBuffer> { read = true; throw new Error('must not read'); }
     }
     const host = ports();

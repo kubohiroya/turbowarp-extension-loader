@@ -30,3 +30,8 @@ test('cache evicts least recently used content and never exceeds capacity', asyn
     cache.clear();
     assert.deepEqual(cache.getSize(), {entries: 0, bytes: 0});
 });
+test('the default cache keeps an extension of the largest default size', async () => {
+    const cache = createMemoryContentCache();
+    await cache.put(a, new Uint8Array(16 * 1024 * 1024));
+    assert.equal((await cache.get(a))!.length, 16 * 1024 * 1024);
+});

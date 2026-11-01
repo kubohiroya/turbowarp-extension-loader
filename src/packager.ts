@@ -2,6 +2,7 @@ import {LoaderError, validateManifest, type ExtensionSource, type ExtensionSpec,
 import {createProjectIO, type ArchiveLimits, type ZipConstructor} from './project-codec.js';
 import {collectVerifiedCodes as collect} from './verified-code.js';
 import {readPreparedProject as decodePrepared} from './project-data.js';
+import {MAX_LEGACY_DATA_URL_LENGTH} from './limits.js';
 
 export interface DistributionMetadata {license?: string; copyright?: string; provenance?: string}
 export interface ConversionOptions {
@@ -149,13 +150,14 @@ export async function prepareOfflinePackage(input: unknown, ports: PackagingPort
 /** Migrate a legacy Data URL only after the host explicitly pins and approves its bytes. */
 export async function migrateLegacyDataURL({id, url, sha256, metadata}: LegacyDataURL, ports: PackagingPorts,
     options: {signal?: AbortSignal; loaderOptions?: LoaderOptions} = {}): Promise<MigratedDataURL> {
-    if (typeof url !== 'string' || url.length > 4 * 1024 * 1024) fail('INVALID_SOURCE', 'Invalid or oversized legacy Data URL');
+    if (typeof url !== 'string' || url.length > MAX_LEGACY_DATA_URL_LENGTH) fail('INVALID_SOURCE', 'Invalid or oversized legacy Data URL');
     const match = /^data:(?:application|text)\/(?:javascript|x-javascript)(?:;charset=utf-8)?(;base64)?;?,([\s\S]*)$/i.exec(url);
     if (!match) fail('INVALID_SOURCE', 'Only explicit JavaScript Data URLs can be migrated');
     let bytes: Uint8Array;
     try {
         if (match[1]) {
-            if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(match[2])) throw new Error('Invalid base64');
+            // A repeated group overflows the regex stack on a multi-MiB payload; this form is linear.
+            if (match[2].length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(match[2])) throw new Error('Invalid base64');
             bytes = Uint8Array.from(atob(match[2]), character => character.charCodeAt(0));
         } else {
             // decodeURIComponent would reject arbitrary non-UTF8 bytes before the shared validator can diagnose them.
