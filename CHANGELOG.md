@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.1
+
 Default size limits that fit real extensions. A bundled story runtime of about 7 MiB was rejected in
 every Plus form (`INVALID_ARCHIVE` for embedded, `INVALID_BYTES` for remote and cached) although
 the same project loaded from a Data URL, because the loader read at most 1 MiB per extension while
