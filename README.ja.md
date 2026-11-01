@@ -15,7 +15,7 @@ npm install @kubohiroya/turbowarp-extension-loader
 - 拡張ごとの Embedded / Remote / Cached 解決、SHA-256 必須固定、UTF-8 検証、コードごと・全体のサイズ上限。
 - SHA-256 キーのキャッシュポート。読み出すたびに exact bytes を再検証し、キャッシュ利用時もホストの認可を要求します。
 - 明示的なホスト認可後、全拡張の検証・認可が揃ってから登録を始めます。登録 ID 不一致・登録失敗はホスト transaction の rollback を要求します。
-- キャンセル、取得・認可のタイムアウト、重複ロード拒否、unload、診断イベント。
+- キャンセル、取得・認可のタイムアウト、Remote の一時的な失敗の有限回の再試行、重複ロード拒否、unload、診断イベント。
 
 標準拡張・汎用カスタム URL・従来の Data URL は読み替えません。Manifest がない作品ではホストポートを呼び出しません。作品内の `execution: "unsandboxed"` は要求値であり権限ではありません。`trusted` などの未知フィールドは拒否します。
 
@@ -67,14 +67,32 @@ await loader.unload();
 - core は JS を評価しません。評価権限と VM 内部 API はホストに限定します。
 - ロールバックはホストの拡張登録状態の保証です。一度評価した特権 JS の DOM / ネットワーク等の副作用を巻き戻すことはできません。安全なコードの承認は別途必要です。
 - 初期版は Remote の HTTP、資格情報付き URL、フラグメント、リダイレクトをすべて拒否します。HTTPS URL の正常取得だけで認可しません。
-- `createFetchPort()` はリダイレクト無効、credentials 不送信、referrer 不送信、ストリームの実サイズ制限を適用します。CORS / CSP / offline の fetch 拒否は `LOAD_FAILED` の `cause` に保持します。ネットワーク層の詳細分類はcauseへ委ね、CORS/CSPはEditor側の実ブラウザーE2Eで検証します。
-- injected fetch ポートは `finalURL` と明示的な空 `redirects` を返す必要があります。ポート自体は信頼済みホストが実装する境界です。
+- `createFetchPort()` はリダイレクト無効、credentials 不送信、referrer 不送信、ストリームの実サイズ制限を適用します。CORS / CSP / offline の fetch 拒否は `LOAD_FAILED` の `cause` に保持し、失敗した HTTP 応答はステータスも同じ `cause` に残します。ネットワーク層の詳細分類はcauseへ委ね、CORS/CSPはEditor側の実ブラウザーE2Eで検証します。
+- injected fetch ポートは `finalURL` と明示的な空 `redirects` を返す必要があります。ポート自体は信頼済みホストが実装する境界であり、再試行もその境界に置いています（後述）。
 - 取得・認可は応答しないポートでもタイムアウトします。登録処理はキャンセル後も完了を待ってから rollback します。遅れて完了する登録と rollback の競合を避けるため、登録ポートが `AbortSignal` に応答しない場合、登録中の有限時間終了は保証できません。
 - キャッシュの容量・失効・永続化・出所ログはホストのポートが担当します。壊れたキャッシュを暗黙に無視して Remote へ切り替えません。
 - `./packager` はEmbedded / Remote変換、明示承認付きData URL移行、lock/license metadata保持、offline SB3準備を提供します。外部依存資源がある拡張は同梱を推測せず拒否します。署名・発行者鍵のpinningはホスト側で追加できる設計で、初期実装は内容・取得元に束縛したセッション承認です。
 - ZIP の実装は `createProjectIO({zip: JSZip})` に注入します。core の codec が ZIP central directory を直接検査し、重複・経路・宣言容量を検証してから、ストリーム展開の実容量と CRC32 を検査します。外部実装の archive port を使う場合も同等の検証が必要です。
 
 既定値は最大64拡張、1拡張16 MiB、合計64 MiB、取得・認可30秒です。1拡張と合計の既定値は project codec の1 entry と全展開量の上限に揃えてあり、作品に格納できる拡張ファイルは Loader でも読めます。ホストは loader options で下げられます。データURLやHTTPの開発モード例外はありません。標準 TurboWarp / 非対応エディターが独自 Manifest と ZIP エントリを破棄する可能性があるため、保持対応のないホストでの再保存は移行手段になりません。
+
+### Remote の一時的な失敗の再試行
+
+再試行は fetch ポートに置いています。`createFetchPort()` は自身を `withFetchRetry()` で包むため、既定ポートを使うホストは変更不要です。独自ポートを注入するホストも `withFetchRetry(hostPort)` で同じように包めます。core 自身の解決ループに再試行を置かない理由は2つあります。再試行は転送層の方針である一方、同じループの他の失敗（digest 不一致、壊れたキャッシュ、認可の拒否）は決して繰り返してはならないこと。そして core は任意のポートが投げたものを分類できないため、ここで再試行すると推測するか、既存の全ポートに新しいエラー契約を強いることになること。**その帰結として、core は注入されたポートの挙動を強制できません。** 独自ポートを実装するホストが自分で決めることになり、`./project-catalog` と `./project-authoring` は渡されたポートと同じだけ再試行します。
+
+| 失敗 | 再試行する | 再試行しない |
+| --- | --- | --- |
+| HTTP 応答があった | 408 / 425 / 429 と 5xx 全般 | それ以外の 4xx。404 は「無い」という答え |
+| 応答が無かった | 接続できなかった場合 | `AbortSignal` による中止。タイムアウトも含む |
+| 要求の前 | — | URL・HTTP・資格情報・フラグメントの拒否（`INVALID_SOURCE`） |
+| 応答の後 | — | リダイレクトと最終 URL の不一致（`FETCH_FAILED` / `REDIRECT_DENIED`）、サイズ上限（`INVALID_BYTES`）、digest 不一致、壊れたキャッシュ、認可の拒否 |
+| キャッシュヒット | — | ハッシュ固定のエントリは CDN に接触しないため対象外 |
+
+分類は `isTransientFetchFailure(error)` として公開し、`createFetchPort()` が出す `FETCH_FAILED` は HTTP ステータスを `cause` に保持するので、包む側から読めます。ただし分類できない事象が1つあります。ブラウザーの `fetch()` は、接続できなかった場合・DNS 失敗・オフライン・CORS / CSP による拒否のいずれでも同一の `TypeError` を返します。仕様が意図して区別させていません。したがって CORS / CSP による拒否も、本来の対象である接続失敗と一緒に再試行されます。これが許容できるのは待ち時間の上限が小さいからであり、上限を小さくした理由でもあります。
+
+**待ち時間は二重に制限されます。** `DEFAULT_FETCH_RETRY` は再試行2回、400 ms → 800 ms のバックオフで、最初の試行から5秒を超えて新しい試行を始めません。この上限はバックオフの待機も含むため、1回目が遅ければそれだけで使い切ります。その上に、取得・認可の既定タイムアウト30秒が操作全体を覆います。これは fetch 1件ごとのタイマーではなく、全拡張の取得・認可・登録を1つのタイマーで覆うものです。よって再試行でタイムアウトが倍になることはありません。30秒は本変更の前から最悪値であり、後も最悪値のままです。上限が決めるのは、その30秒のうち1つの URL が問い直しに使える分だけです。バックオフ待機は signal で中断され、待ち切ることはないので、キャンセルは即時のままです。`createFetchPort(fetchImpl, {retries: 0})` で従来の1回だけの挙動に戻せます。`onRetry` が各待機を通知するので、ホストは進捗を表示できます。
+
+あきらめたら最後です。登録は全エントリの検証・認可が揃ってから始まるため、再試行を使い切ったエントリが1件あれば操作全体が失敗します。エントリは1件ずつ解決するので、その後のエントリは取得されません。操作の `AbortSignal` も中止するので、core がもう待っていないポートの処理は停止します。ホスト transaction は rollback し、元の作品が復元されます。そこから先は待っている人が再試行機構であり、ホストは作品を開き直すか拡張の追加をやり直すよう求めます。誰も見ていないため再試行で失敗を吸収しなければならないビルド時のカタログ生成とは、意図して方針を逆にしています。
 
 ## IndexedDB 永続キャッシュ（ブラウザホスト用）
 
@@ -137,6 +155,7 @@ npm run check
 - `isAuthorizedCode(value)` はコアが発行し現在登録中の認可証跡だけを識別します。コピー・作品データによる偽造を拒否し、transaction終了時に失効します。
 - `./session-trust` の `createSessionTrustProvider` はid/digest/source/version/publisher/capabilities/dependenciesへ束縛した承認を保持します。明示された外部ホストのURL/execution方針をUI前に毎回適用し、判定できないEmbedded要求は拒否します。
 - `./memory-cache` の `createMemoryContentCache` はコピー・容量（既定32 MiB、既定最大サイズの拡張2件分）・TTL・LRUを提供し、コアはヒット時にも内容を再検証します。
+- `withFetchRetry(port, options)` は任意の fetch ポートを上記の有限回の再試行で包み、`isTransientFetchFailure(error)` はその分類器、`DEFAULT_FETCH_RETRY` は既定値（再試行2回、400 ms から倍々で上限2秒、合計5秒）です。
 - `./webpack4` はGUI/Packager用の同一コアをwebpack 4でビルドするための構成補助です。
 
 実GUI、実Packager 3.14.0の生成HTML、Desktop 1.17.0の互換性はEditor側のE2Eが担当します。標準Desktopや標準WebへLoaderを無断インストールしません。標準Desktopの保存は独自Manifest/ZIPエントリを破棄することを実測しているため、保持対応エディターで保存してください。
