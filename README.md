@@ -56,6 +56,32 @@ await loader.unload();
 
 既定値は最大64拡張、1拡張1 MiB、合計8 MiB、取得・認可30秒です。データURLやHTTPの開発モード例外はありません。標準 TurboWarp / 非対応エディターが独自 Manifest と ZIP エントリを破棄する可能性があるため、保持対応のないホストでの再保存は移行手段になりません。
 
+## IndexedDB 永続キャッシュ（ブラウザホスト用）
+
+`./indexeddb-cache` はリモートで取得・SHA-256 検証済みの JS バイト列を、ブラウザ再起動をまたいで再利用するための **任意の Cache Port アダプター**です。Loader コア側には IndexedDB 依存を持たせません。
+
+```js
+import {createIndexedDBContentCache}
+    from '@kubohiroya/turbowarp-extension-loader/indexeddb-cache';
+
+const cache = createIndexedDBContentCache({
+    databaseName: 'turbowarp-plus-extension-cache',
+    maxBytes: 32 * 1024 * 1024, // compressed storage quota
+    maxDecompressedBytes: 8 * 1024 * 1024,
+    ttlMs: 30 * 24 * 60 * 60 * 1000
+});
+const loader = createExtensionLoader({...hostPorts, cache});
+// 終了・ログアウトなどの明示操作で await cache.clear() / await cache.close()
+```
+
+- キーは lowercase SHA-256 hex。**保存する値は生JSではなく gzip 圧縮されたバイト列**（format: `gzip-v1`、元サイズを併記）。取得時に展開して Loader に返します。既定32 MiB は**圧縮後の総保存容量**、展開後の最大サイズは8 MiB、TTLは30日。容量超過時は最終アクセス順LRUで削除します。旧形式の非圧縮エントリは読み込まず削除します。
+- 展開は出力サイズを制限し、改ざん・gzip破損や展開超過を拒否します。ブラウザの `CompressionStream` / `DecompressionStream` が必要です。非対応環境で生JSへ黙って切り替えて保存することはありません。
+- キャッシュを利用した際にも Loader コアが **取得バイト列の SHA-256 を再検証** し、毎回 trustProvider の権限判定を適用します。キャッシュが信頼判断を代行することはありません。
+- キャッシュは IndexedDB を使用できるブラウザ origin に紐付き、ブラウザのストレージ削除・プライベートモード・容量不足等で消える場合があります。ブラウザからの永続化保証はありません。
+- IndexedDB が利用できない環境では生成時に明示的に失敗します。ホストは必要に応じて `createMemoryContentCache` にフォールバックできます。ただしキャッシュ障害を無条件に無視してコード実行するのではなく、ホスト側で失敗方針を決めてください。
+- 新たな Remote バイト列を取得し保存した場合も、権限承認は毎回別途必要です。コード内から追加取得される依存リソースや外部サービスはこのキャッシュの対象外です。
+- Web/Editor はこのポートを初期化して注入するだけとし、`scratch-gui` と `turbowarp-plus-editor` に別のキャッシュロジックを実装しないでください。
+
 ## ソースとビルド
 
 ソースは `src/*.ts` の TypeScript です。`npm run build`（`tsc`）が ES2022 の ESM と型宣言を `dist/` に出力し、`exports`・`main`/`module`・webpack 4 用のルートファイル（`packager.js` など）はすべて `dist/` を指します。`dist/` は Git に含めず、Git 依存としてインストールされるときに `prepare` スクリプトがビルドします。webpack 4 では従来どおり `./webpack4` の Babel 設定が `dist/` を変換します。

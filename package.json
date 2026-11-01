@@ -37,10 +37,15 @@
     "./memory-cache": {
       "types": "./dist/memory-cache.d.ts",
       "default": "./dist/memory-cache.js"
+    },
+    "./indexeddb-cache": {
+      "types": "./dist/indexeddb-cache.d.ts",
+      "default": "./dist/indexeddb-cache.js"
     }
   },
   "files": [
     "dist",
+    "indexeddb-cache.js",
     "memory-cache.js",
     "packager.js",
     "project-authoring.js",
