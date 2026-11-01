@@ -123,7 +123,11 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
             fetched.set(url, bytes);
             return bytes;
         }
+        // Copies the replaced entries kept; released below unless a final entry still names them.
+        const replacedPaths = new Set<string>();
         for (const choice of choices) {
+            const replaced = prepared.manifest?.extensions.find(spec => spec.id === choice.id)?.source;
+            if (replaced && replaced.type !== 'remote') replacedPaths.add(replaced.path);
             const old = previous.get(choice.id);
             // Every catalog request was validated as a Remote source above.
             const bytes = old ? encoder.encode(old.code) : await fetchBytes((choice.source as {url: string}).url);
@@ -153,6 +157,8 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
                 capabilities: old?.capabilities || [], dependencies: choice.dependencies});
         }
         const manifest = validateManifest({schemaVersion: 1, extensions: [...extensions.values()]}, loaderOptions);
+        for (const spec of manifest.extensions) if (spec.source.type !== 'remote') replacedPaths.delete(spec.source.path);
+        for (const path of replacedPaths) delete files[path];
         project.turboWarpPlus = manifest;
         project.extensions = [...new Set([...(project.extensions || []), ...manifest.extensions.map(spec => spec.id)])];
         const urls = {...(project.extensionURLs || {})};

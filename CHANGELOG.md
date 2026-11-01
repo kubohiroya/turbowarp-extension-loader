@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `./project-catalog` releases the archive copy a replaced Embedded or Cached entry kept. Switching
+  an extension to Remote left the old `extensions/…` file in the SB3 although no Manifest entry named
+  it any more. A copy the new entry still uses (Cached ↔ Embedded) stays.
+
 ## 0.2.1
 
 Default size limits that fit real extensions. A bundled story runtime of about 7 MiB was rejected in
