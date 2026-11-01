@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+Default size limits that fit real extensions. A bundled story runtime of about 7 MiB was rejected in
+every Plus form (`INVALID_ARCHIVE` for embedded, `INVALID_BYTES` for remote and cached) although
+the same project loaded from a Data URL, because the loader read at most 1 MiB per extension while
+the project codec stored entries up to 16 MiB.
+
+- The loader, `./project-catalog` and `./project-authoring` default to 16 MiB per extension and
+  64 MiB in total, the codec's per-entry and expansion limits. All defaults now come from one module,
+  so an entry the codec accepts is one the loader reads. Hosts can still lower them.
+- `./project-codec` accepts a `project.json` of up to 32 MiB by default (it was 4 MiB), the value
+  the TurboWarp Plus editor already passed; the same project's `project.json` is 6.8 MB once its
+  runtime moves out to an archive entry, so a host using the defaults, such as the packager page,
+  rejected it before any extension was read.
+- `createMemoryContentCache` defaults to 32 MiB and the IndexedDB cache to a 16 MiB decompressed
+  maximum, so a cache holds an extension of the largest default size.
+- `migrateLegacyDataURL` accepts a Data URL long enough for a 16 MiB extension (it stopped at
+  4,194,304 characters), and its base64 check is linear: the previous pattern overflowed the regex
+  stack on a payload of a few MiB and reported `INVALID_ENCODING`.
+
 ## 0.2.0
 
 A third source form for extensions whose bytes should be reachable both from a canonical published

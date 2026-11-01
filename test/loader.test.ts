@@ -168,6 +168,30 @@ test('tampered bytes, invalid UTF-8, excessive size, and missing embedded input 
     await assert.rejects(loader.load(manifest({...spec(), sha256: hash(bad)})), codeIs('INVALID_ENCODING'));
 });
 
+/** The fixture followed by a comment, so the bytes stay a valid extension of exactly `size` bytes. */
+const padded = (size: number) => {
+    const bytes = new Uint8Array(size).fill(0x78);
+    bytes.set(fixture);
+    bytes.set(new TextEncoder().encode('\n//'), fixture.length);
+    return bytes;
+};
+
+test('default limits read a several-MiB extension from every source and stop past 16 MiB', async () => {
+    // A bundled story runtime is about 7 MiB; it must load in a Plus form as it does from a Data URL.
+    const large = padded(7.5 * 1024 * 1024);
+    for (const source of [{type: 'embedded', path: 'extensions/fixture.js'}, {type: 'remote', url: 'https://example.org/fixture.js'},
+        {type: 'cached', url: 'https://example.org/fixture.js', path: 'extensions/fixture.js'}]) {
+        const {loader, calls} = host({embeddedReader: {async read() { return large; }},
+            fetcher: {async fetch(url: string) { return {bytes: large, finalURL: url, redirects: []}; }}});
+        assert.deepEqual((await loader.load(manifest({...spec('fixture', source), sha256: hash(large)}))).ids, ['fixture']);
+        assert.equal((calls.find(call => call[0] === 'register')![2] as string).length, large.length);
+    }
+    const oversized = padded(16 * 1024 * 1024 + 1);
+    const {loader, calls} = host({embeddedReader: {async read() { return oversized; }}});
+    await assert.rejects(loader.load(manifest({...spec(), sha256: hash(oversized)})), codeIs('INVALID_BYTES'));
+    assert.equal(calls.some(call => call[0] === 'authorize'), false);
+});
+
 test('remote response requires exact final URL and no redirects', async () => {
     const remote = spec('fixture', {type: 'remote', url: 'https://example.org/fixture.js'});
     for (const response of [{bytes: fixture}, {bytes: fixture, finalURL: remote.source.url, redirects: ['https://evil.test/']}, {bytes: fixture, finalURL: 'https://evil.test/', redirects: []}]) {

@@ -1,11 +1,12 @@
 import {gzipBytes, gunzipBytes} from './cache-gzip.js';
+import {DEFAULT_ENTRY_BYTES} from './limits.js';
 
 export interface IndexedDBContentCacheOptions {
     indexedDB?: IDBFactory;
     databaseName?: string;
     /** Compressed bytes quota (default 32 MiB). */
     maxBytes?: number;
-    /** Maximum decompressed JS size (default 8 MiB). */
+    /** Maximum decompressed JS size (default 16 MiB, the largest default extension). */
     maxDecompressedBytes?: number;
     now?: () => number;
 }
@@ -28,7 +29,7 @@ export function createIndexedDBContentCache({
     indexedDB = globalThis.indexedDB,
     databaseName = 'turbowarp-plus-extension-cache',
     maxBytes = 32 * 1024 * 1024,
-    maxDecompressedBytes = 8 * 1024 * 1024,
+    maxDecompressedBytes = DEFAULT_ENTRY_BYTES,
     now = Date.now
 }: IndexedDBContentCacheOptions = {}): IndexedDBContentCache {
     if (!indexedDB || typeof indexedDB.open !== 'function') throw new Error('IndexedDB unavailable');

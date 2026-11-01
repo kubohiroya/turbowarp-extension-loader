@@ -3,6 +3,7 @@ import {LoaderError, validateManifest, type ExecutionMode, type ExtensionSource,
 import {createProjectIO, type ArchiveLimits, type ZipConstructor} from './project-codec.js';
 import {readPreparedProject} from './project-data.js';
 import {collectVerifiedCodes} from './verified-code.js';
+import {DEFAULT_LOADER_LIMITS, DEFAULT_TOTAL_BYTES} from './limits.js';
 
 export interface CatalogExtensionRequest {
     id: string;
@@ -39,8 +40,7 @@ export function prepareCatalogExtensionChanges(input: unknown, requests: Catalog
 export async function prepareCatalogExtensionChanges(input: unknown, requests: CatalogExtensionRequest[], ports: CatalogPorts, {
     zip: Zip, signal: externalSignal, loaderOptions = {}, archiveOptions
 }: Partial<CatalogOptions> = {}): Promise<Readonly<{projectBytes: Uint8Array; manifest: Manifest}>> {
-    const limits = {maxExtensions: 64, maxBytes: 1024 * 1024, maxTotalBytes: 8 * 1024 * 1024,
-        timeoutMs: 30000, ...loaderOptions};
+    const limits = {...DEFAULT_LOADER_LIMITS, ...loaderOptions};
     for (const key of ['maxExtensions', 'maxBytes', 'maxTotalBytes', 'timeoutMs'] as const) {
         if (!Number.isSafeInteger(limits[key]) || limits[key] < 1) fail('INVALID_OPTIONS', `Invalid ${key}`);
     }
@@ -48,7 +48,7 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
         fail('INVALID_ADDITION', 'A bounded catalog selection is required');
     }
     if (input instanceof Uint8Array || input instanceof ArrayBuffer) {
-        if (input.byteLength > (archiveOptions?.maxArchiveBytes ?? 64 * 1024 * 1024)) {
+        if (input.byteLength > (archiveOptions?.maxArchiveBytes ?? DEFAULT_TOTAL_BYTES)) {
             fail('ARCHIVE_SIZE_LIMIT', 'Project exceeds the archive byte limit');
         }
         input = input.slice(0);

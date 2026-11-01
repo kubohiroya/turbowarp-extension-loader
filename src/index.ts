@@ -1,3 +1,5 @@
+import {DEFAULT_LOADER_LIMITS} from './limits.js';
+
 /**
  * Where one extension's bytes live.
  *
@@ -65,7 +67,7 @@ export interface ExtensionLoader {
 
 type Mutable<T> = {-readonly [K in keyof T]: T[K]};
 
-const DEFAULTS = Object.freeze({maxExtensions: 64, maxBytes: 1024 * 1024, maxTotalBytes: 8 * 1024 * 1024, timeoutMs: 30000});
+const DEFAULTS = DEFAULT_LOADER_LIMITS;
 const RESERVED_IDS = new Set(['pen', 'music', 'videoSensing', 'text2speech', 'translate', 'microbit', 'ev3', 'boost', 'wedo2', 'gdxfor', 'makeymakey']);
 const ID = /^[a-zA-Z][a-zA-Z0-9]{0,63}$/;
 const SHA256 = /^[a-f0-9]{64}$/;

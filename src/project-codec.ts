@@ -1,5 +1,6 @@
 import {discoverManifest, LoaderError, type Manifest} from './index.js';
 import type {ProjectJSON} from './project-data.js';
+import {DEFAULT_ENTRY_BYTES, DEFAULT_PROJECT_JSON_BYTES, DEFAULT_TOTAL_BYTES} from './limits.js';
 
 export interface ArchiveLimits {
     maxArchiveBytes?: number;
@@ -53,8 +54,8 @@ interface ZipEntry {
 }
 interface ProjectState {manifest: Manifest; project: ProjectJSON; files: Map<string, Uint8Array>}
 
-const DEFAULTS = Object.freeze({maxArchiveBytes: 64 * 1024 * 1024, maxTotalBytes: 64 * 1024 * 1024,
-    maxEntryBytes: 16 * 1024 * 1024, maxProjectBytes: 4 * 1024 * 1024, maxEntries: 4096, maxRatio: 1000});
+const DEFAULTS = Object.freeze({maxArchiveBytes: DEFAULT_TOTAL_BYTES, maxTotalBytes: DEFAULT_TOTAL_BYTES,
+    maxEntryBytes: DEFAULT_ENTRY_BYTES, maxProjectBytes: DEFAULT_PROJECT_JSON_BYTES, maxEntries: 4096, maxRatio: 1000});
 const decoder = new TextDecoder('utf-8', {fatal: true});
 const encoder = new TextEncoder();
 function fail(message: string): never { throw new LoaderError('INVALID_ARCHIVE', message); }

@@ -1,3 +1,4 @@
+import {DEFAULT_MEMORY_CACHE_BYTES} from './limits.js';
 export interface MemoryContentCacheOptions {maxBytes?: number; ttlMs?: number; now?: () => number}
 export type MemoryContentCache = Readonly<{
     get(key: string): Promise<Uint8Array | undefined>;
@@ -7,7 +8,7 @@ export type MemoryContentCache = Readonly<{
 }>;
 
 /** Bounded host-session storage; the Loader re-verifies bytes on every cache hit. */
-export function createMemoryContentCache({maxBytes = 8 * 1024 * 1024, ttlMs = 60 * 60 * 1000, now = Date.now}: MemoryContentCacheOptions = {}): MemoryContentCache {
+export function createMemoryContentCache({maxBytes = DEFAULT_MEMORY_CACHE_BYTES, ttlMs = 60 * 60 * 1000, now = Date.now}: MemoryContentCacheOptions = {}): MemoryContentCache {
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || !Number.isSafeInteger(ttlMs) || ttlMs < 1 || typeof now !== 'function') {
         throw new TypeError('Invalid cache capacity or expiry');
     }
