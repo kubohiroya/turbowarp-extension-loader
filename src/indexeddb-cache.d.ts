@@ -2,7 +2,10 @@
 export function createIndexedDBContentCache(options?: {
     indexedDB?: IDBFactory;
     databaseName?: string;
+    /** Compressed bytes quota (default 32 MiB). */
     maxBytes?: number;
+    /** Maximum decompressed JS size (default 8 MiB). */
+    maxDecompressedBytes?: number;
     ttlMs?: number;
     now?: () => number;
 }): Readonly<{
