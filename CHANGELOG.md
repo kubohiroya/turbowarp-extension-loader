@@ -21,3 +21,7 @@ dependency.
   stores gzip-compressed bytes with bounded decompression and LRU eviction.
 - `./webpack4`: configuration helper for building the same core under webpack 4.
 - The core is TypeScript; `npm run build` emits ES2022 ESM and `dist/*.d.ts` declarations.
+- The TypeScript layout now matches the other `@kubohiroya/turbowarp-*` packages: the tests are
+  TypeScript too (`test/*.test.ts`, run on the Node.js type-stripping runtime), `tsconfig.json`
+  typechecks without emitting while `tsconfig.build.json` emits, `test/tsconfig.json` covers the
+  tests, and `npm run check` runs typecheck, tests and a pack dry run — which is what CI runs.

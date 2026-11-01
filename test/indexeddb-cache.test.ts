@@ -2,20 +2,22 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createIndexedDBContentCache} from '@kubohiroya/turbowarp-extension-loader/indexeddb-cache';
 
+/** The adapter only ever calls open(); a stub stands in for the rest of IDBFactory. */
+const stubIndexedDB = (open: () => unknown) => ({open}) as unknown as IDBFactory;
 const key = 'a'.repeat(64);
 test('IndexedDB cache rejects unavailable storage and invalid settings', () => {
     assert.throws(() => createIndexedDBContentCache({indexedDB: undefined}), /IndexedDB unavailable/);
-    assert.throws(() => createIndexedDBContentCache({indexedDB: {open() {}}, maxBytes: 0}), /Invalid/);
+    assert.throws(() => createIndexedDBContentCache({indexedDB: stubIndexedDB(() => {}), maxBytes: 0}), /Invalid/);
 });
 test('IndexedDB cache uses content-addressed keys and validates bytes before opening', async () => {
     let opens = 0;
-    const cache = createIndexedDBContentCache({indexedDB: {open() { opens++; throw Error('unexpected'); }}});
+    const cache = createIndexedDBContentCache({indexedDB: stubIndexedDB(() => { opens++; throw Error('unexpected'); })});
     await assert.rejects(cache.get('not-a-digest'), /SHA-256/);
-    await assert.rejects(cache.put(key, 'not bytes'), /SHA-256/);
+    await assert.rejects(cache.put(key, 'not bytes' as unknown as Uint8Array), /SHA-256/);
     assert.equal(opens, 0);
 });
 test('IndexedDB cache signals cancellation before opening a transaction', async () => {
-    const cache = createIndexedDBContentCache({indexedDB: {open() { throw Error('unexpected'); }}});
+    const cache = createIndexedDBContentCache({indexedDB: stubIndexedDB(() => { throw Error('unexpected'); })});
     const controller = new AbortController();
     controller.abort(new Error('cancelled'));
     await assert.rejects(cache.get(key, {signal: controller.signal}), /cancelled/);

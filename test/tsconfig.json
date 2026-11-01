@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // Tests reach for Array.prototype.findLastIndex; the published core stays on the ES2022 surface.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    // Tests deliberately pass values the public types forbid, and keep unused helpers close to their cases.
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": ["."]
+}

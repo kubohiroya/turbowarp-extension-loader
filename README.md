@@ -91,17 +91,18 @@ const loader = createExtensionLoader({...hostPorts, cache});
 
 ## Source and build
 
-The source is TypeScript in `src/*.ts`. `npm run build` (`tsc`) emits ES2022 ESM and type declarations to `dist/`, and `exports`, `main`/`module` and the root files used by webpack 4 (`packager.js` and the rest) all point at `dist/`. `dist/` is not committed to Git; the `prepare` script builds it when the package is installed as a Git dependency. Under webpack 4, the Babel configuration in `./webpack4` transpiles `dist/` as before.
+The source and the tests are TypeScript, in `src/*.ts` and `test/*.test.ts`, laid out the same way as the other `@kubohiroya/turbowarp-*` packages: `tsconfig.json` typechecks without emitting, `tsconfig.build.json` extends it to emit, and `test/tsconfig.json` extends it for the tests. `npm run build` (`tsc -p tsconfig.build.json`) emits ES2022 ESM and type declarations to `dist/`, and `exports`, `main`/`module` and the root files used by webpack 4 (`packager.js` and the rest) all point at `dist/`. `dist/` is not committed to Git; the `prepare` script builds it when the package is installed as a Git dependency. Under webpack 4, the Babel configuration in `./webpack4` transpiles `dist/` as before.
+
+The core keeps the strictness it was written with: `strict`, plus `noUnusedLocals`, `noUnusedParameters`, `noImplicitOverride`, `noImplicitReturns`, `noFallthroughCasesInSwitch` and `verbatimModuleSyntax`. It does not yet enable `noUncheckedIndexedAccess` or `exactOptionalPropertyTypes`, which some sibling packages do.
 
 ## Verification
 
 ```sh
 npm ci --ignore-scripts
-npm run typecheck
-npm test
+npm run check
 ```
 
-`npm test` builds `dist/` and then verifies the public API through the package name, so that `exports` resolution is exercised. The tests stay in JavaScript because they also pass input that the types forbid. They use the built-in test runner and Web Crypto of Node.js >=26 to verify the Loader headlessly with no runtime dependency. ZIP codec fixture verification uses the dev dependency `@turbowarp/jszip`. `test/fixtures/extension.js` is a fixture of the bytes handed to the host and is never evaluated during the tests. This is distinct from verifying real networking, CORS / CSP, VM private APIs, or browser extension execution.
+`npm run check` typechecks `src` and `test`, runs the tests, and packs the tarball as a dry run. `npm test` builds `dist/` and then verifies the public API through the package name, so that `exports` resolution is exercised. The tests run as TypeScript on the Node.js type-stripping runtime; where a case exists to prove that a bad value is refused, it casts that value in deliberately rather than weakening the public types. They use the built-in test runner and Web Crypto of Node.js >=26 to verify the Loader headlessly with no runtime dependency. ZIP codec fixture verification uses the dev dependency `@turbowarp/jszip`. `test/fixtures/extension.js` is a fixture of the bytes handed to the host and is never evaluated during the tests. This is distinct from verifying real networking, CORS / CSP, VM private APIs, or browser extension execution.
 
 ## Rollout and rollback
 

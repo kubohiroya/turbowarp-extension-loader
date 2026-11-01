@@ -92,17 +92,18 @@ const loader = createExtensionLoader({...hostPorts, cache});
 
 ## ソースとビルド
 
-ソースは `src/*.ts` の TypeScript です。`npm run build`（`tsc`）が ES2022 の ESM と型宣言を `dist/` に出力し、`exports`・`main`/`module`・webpack 4 用のルートファイル（`packager.js` など）はすべて `dist/` を指します。`dist/` は Git に含めず、Git 依存としてインストールされるときに `prepare` スクリプトがビルドします。webpack 4 では従来どおり `./webpack4` の Babel 設定が `dist/` を変換します。
+ソースもテストも TypeScript で、`src/*.ts` と `test/*.test.ts` に置き、他の `@kubohiroya/turbowarp-*` パッケージと同じ構成にしています。`tsconfig.json` が出力なしの型検査、`tsconfig.build.json` がそれを継承して出力、`test/tsconfig.json` がテスト用の継承設定です。`npm run build`（`tsc -p tsconfig.build.json`）が ES2022 の ESM と型宣言を `dist/` に出力し、`exports`・`main`/`module`・webpack 4 用のルートファイル（`packager.js` など）はすべて `dist/` を指します。`dist/` は Git に含めず、Git 依存としてインストールされるときに `prepare` スクリプトがビルドします。webpack 4 では従来どおり `./webpack4` の Babel 設定が `dist/` を変換します。
+
+型の厳しさはコアを書いたときの設定を保っています（`strict` と `noUnusedLocals`・`noUnusedParameters`・`noImplicitOverride`・`noImplicitReturns`・`noFallthroughCasesInSwitch`・`verbatimModuleSyntax`）。兄弟パッケージの一部が有効にしている `noUncheckedIndexedAccess` と `exactOptionalPropertyTypes` は、まだ有効にしていません。
 
 ## 検証
 
 ```sh
 npm ci --ignore-scripts
-npm run typecheck
-npm test
+npm run check
 ```
 
-`npm test` は `dist/` をビルドしてから、パッケージ名経由（`exports` 解決）で公開APIを検証します。テストは型に反する不正入力も渡すため JavaScript のままです。Node.js >=26 の組み込み test runner / Web Crypto を使い、Loader 本体を実行時依存パッケージなしで headless 検証します。ZIP codec の fixture 検証には開発依存の `@turbowarp/jszip` を使います。`test/fixtures/extension.js` はホストに渡すバイト列の fixture で、テスト中に評価しません。実ネットワーク、CORS / CSP、VM の private API、ブラウザー拡張実行の検証とは区別します。
+`npm run check` は `src` と `test` の型検査、テスト、パッケージの dry-run を順に実行します。`npm test` は `dist/` をビルドしてから、パッケージ名経由（`exports` 解決）で公開APIを検証します。テストは Node.js の型除去実行で TypeScript のまま動かし、不正値が拒否されることを確かめるケースでは、公開型をゆるめる代わりにその値をキャストで明示的に渡します。Node.js >=26 の組み込み test runner / Web Crypto を使い、Loader 本体を実行時依存パッケージなしで headless 検証します。ZIP codec の fixture 検証には開発依存の `@turbowarp/jszip` を使います。`test/fixtures/extension.js` はホストに渡すバイト列の fixture で、テスト中に評価しません。実ネットワーク、CORS / CSP、VM の private API、ブラウザー拡張実行の検証とは区別します。
 
 ## 導入と切戻し
 

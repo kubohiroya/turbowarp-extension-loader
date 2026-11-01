@@ -2,17 +2,31 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
-import {createExtensionLoader, createFetchPort, validateManifest, discoverManifest, LoaderError} from '@kubohiroya/turbowarp-extension-loader';
+import {createExtensionLoader, createFetchPort, validateManifest, discoverManifest, LoaderError,
+    type AuthorizedCode, type LoaderOptions, type LoaderPorts, type ResolvedCode} from '@kubohiroya/turbowarp-extension-loader';
 
 const fixture = new Uint8Array(await readFile(new URL('./fixtures/extension.js', import.meta.url)));
-const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const spec = (id = 'fixture', source = {type: 'embedded', path: 'extensions/fixture.js'}) => ({id, source, execution: 'unsandboxed', sha256: hash(fixture)});
-const manifest = (...extensions) => ({schemaVersion: 1, extensions: extensions.length ? extensions : [spec()]});
-const codeIs = code => error => error instanceof LoaderError && error.code === code;
+const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
+/** Manifest fixtures are rewritten into shapes the public types reject, which is what most cases check. */
+interface SourceFixture {type: string; path?: string; url?: string}
+interface SpecFixture {
+    id: string;
+    source: SourceFixture;
+    execution: string;
+    sha256: string;
+    dependencies?: string[];
+    capabilities?: string[];
+}
+const spec = (id = 'fixture', source: SourceFixture = {type: 'embedded', path: 'extensions/fixture.js'}): SpecFixture =>
+    ({id, source, execution: 'unsandboxed', sha256: hash(fixture)});
+const manifest = (...extensions: SpecFixture[]) => ({schemaVersion: 1, extensions: extensions.length ? extensions : [spec()]});
+const codeIs = (code: string) => (error: unknown) => error instanceof LoaderError && error.code === code;
 
-function host(overrides = {}, options) {
-    const calls = [];
-    const ports = {
+type Call = unknown[];
+/** Overrides stand in broken ports as well as working ones, so they are merged in untyped. */
+function host(overrides: Record<string, unknown> = {}, options?: LoaderOptions) {
+    const calls: Call[] = [];
+    const base: LoaderPorts = {
         embeddedReader: {async read(path) { calls.push(['read', path]); return fixture; }},
         fetcher: {async fetch(url) { calls.push(['fetch', url]); return {bytes: fixture, finalURL: url, redirects: []}; }},
         trustProvider: {async authorize(code) { calls.push(['authorize', code.id]); return {allowed: true, scope: 'digest', sha256: code.sha256}; }},
@@ -27,9 +41,9 @@ function host(overrides = {}, options) {
             },
             async unload(ids) { calls.push(['unload', ids]); }
         },
-        diagnostics(event) { calls.push(['diagnostic', event]); },
-        ...overrides
+        diagnostics(event) { calls.push(['diagnostic', event]); }
     };
+    const ports = {...base, ...overrides} as unknown as LoaderPorts;
     return {loader: createExtensionLoader(ports, options), calls, ports};
 }
 
@@ -44,7 +58,7 @@ test('embedded and remote exact bytes both require explicit host digest approval
     for (const source of [{type: 'embedded', path: 'extensions/fixture.js'}, {type: 'remote', url: 'https://example.org/fixture.js'}]) {
         const {loader, calls} = host();
         assert.deepEqual((await loader.load(manifest(spec('fixture', source)))).ids, ['fixture']);
-        const register = calls.find(call => call[0] === 'register');
+        const register = calls.find(call => call[0] === 'register')!;
         assert.equal(register[2], new TextDecoder().decode(fixture));
         assert.ok(calls.findIndex(call => call[0] === 'authorize') < calls.findIndex(call => call[0] === 'begin'));
         assert.equal(loader.getState().status, 'loaded');
@@ -62,7 +76,7 @@ test('all extensions are verified and authorized before any registration, in dep
     assert.deepEqual(calls.filter(call => call[0] === 'authorize').map(call => call[1]), ['b', 'a']);
     assert.ok(calls.findLastIndex(call => call[0] === 'authorize') < calls.findIndex(call => call[0] === 'begin'));
     await loader.unload();
-    assert.deepEqual(calls.find(call => call[0] === 'unload')[1], ['a', 'b']);
+    assert.deepEqual(calls.find(call => call[0] === 'unload')![1], ['a', 'b']);
 });
 
 test('execution mode remains exact across Embedded and Remote validation, approval and registration', async () => {
@@ -71,13 +85,13 @@ test('execution mode remains exact across Embedded and Remote validation, approv
             {type: 'remote', url: 'https://example.org/fixture.js'}]) {
             let reviewed = 0;
             let registered = 0;
-            const {loader} = host({trustProvider: {async authorize(code) {
+            const {loader} = host({trustProvider: {async authorize(code: ResolvedCode) {
                 assert.equal(code.execution, execution);
                 assert.deepEqual(code.source, source);
                 reviewed++;
                 return {allowed: true, scope: 'digest', sha256: code.sha256};
             }}, registrar: {async begin() { return {
-                async register(code) {
+                async register(code: AuthorizedCode) {
                     assert.equal(code.execution, execution);
                     assert.equal(reviewed, 1);
                     registered++;
@@ -93,10 +107,10 @@ test('execution mode remains exact across Embedded and Remote validation, approv
 
 test('manifest is copied and deeply frozen before asynchronous host calls', async () => {
     const input = manifest();
-    const {loader} = host({trustProvider: {async authorize(code) {
+    const {loader} = host({trustProvider: {async authorize(code: ResolvedCode) {
         assert.ok(Object.isFrozen(code));
         assert.ok(Object.isFrozen(code.source));
-        assert.throws(() => { code.source.path = 'evil'; }, TypeError);
+        assert.throws(() => { (code.source as {path: string}).path = 'evil'; }, TypeError);
         input.extensions[0].id = 'evil';
         return {allowed: true, scope: 'digest', sha256: code.sha256};
     }}});
@@ -104,7 +118,7 @@ test('manifest is copied and deeply frozen before asynchronous host calls', asyn
 });
 
 test('malformed manifests cannot claim trust, alternate source, fallback or execution', () => {
-    const cases = [
+    const cases: [unknown, string][] = [
         [{...manifest(), schemaVersion: 2}, 'UNSUPPORTED_SCHEMA'],
         [{...manifest(), trusted: true}, 'INVALID_MANIFEST'],
         [manifest({...spec(), source: {type: 'embedded', path: 'extensions/../fixture.js'}}), 'INVALID_SOURCE'],
@@ -133,13 +147,18 @@ test('unapproved or wrong-scope digest never reaches registration', async () => 
 });
 
 test('late trust refusal prevents earlier approved code from being registered', async () => {
-    const {loader, calls} = host({trustProvider: {async authorize(code) { return {allowed: code.id === 'a', scope: 'digest', sha256: code.sha256}; }}});
+    const {loader, calls} = host({trustProvider: {async authorize(code: ResolvedCode) { return {allowed: code.id === 'a', scope: 'digest', sha256: code.sha256}; }}});
     await assert.rejects(loader.load(manifest(spec('a'), spec('b'))), codeIs('TRUST_DENIED'));
     assert.equal(calls.some(call => call[0] === 'begin'), false);
 });
 
 test('tampered bytes, invalid UTF-8, excessive size, and missing embedded input fail closed', async () => {
-    for (const [bytes, code, options] of [[new Uint8Array([1]), 'DIGEST_MISMATCH'], [fixture, 'INVALID_BYTES', {maxBytes: 2}], [new Uint8Array(), 'INVALID_BYTES']]) {
+    const cases: [Uint8Array, string, LoaderOptions?][] = [
+        [new Uint8Array([1]), 'DIGEST_MISMATCH'],
+        [fixture, 'INVALID_BYTES', {maxBytes: 2}],
+        [new Uint8Array(), 'INVALID_BYTES']
+    ];
+    for (const [bytes, code, options] of cases) {
         const {loader, calls} = host({embeddedReader: {async read() { return bytes; }}}, options);
         await assert.rejects(loader.load(manifest()), codeIs(code));
         assert.equal(calls.some(call => call[0] === 'authorize'), false);
@@ -172,18 +191,19 @@ test('verified cache works offline but still needs trust; corrupted cache fails 
 test('offline cache miss preserves cause and never registers', async () => {
     const failure = new TypeError('Network unavailable');
     const {loader, calls} = host({cache: {async get() { return null; }, async put() {}}, fetcher: {async fetch() { throw failure; }}});
-    await assert.rejects(loader.load(manifest(spec('fixture', {type: 'remote', url: 'https://example.org/fixture.js'}))), error => error.code === 'LOAD_FAILED' && error.cause === failure);
+    await assert.rejects(loader.load(manifest(spec('fixture', {type: 'remote', url: 'https://example.org/fixture.js'}))),
+        (error: unknown) => error instanceof LoaderError && error.code === 'LOAD_FAILED' && error.cause === failure);
     assert.equal(calls.some(call => call[0] === 'begin'), false);
 });
 
 test('cache receives a private verified byte copy', async () => {
-    const {loader, calls} = host({cache: {async get() { return undefined; }, async put(digest, bytes) { assert.equal(digest, hash(fixture)); bytes.fill(0); }}});
+    const {loader, calls} = host({cache: {async get() { return undefined; }, async put(digest: string, bytes: Uint8Array) { assert.equal(digest, hash(fixture)); bytes.fill(0); }}});
     await loader.load(manifest());
-    assert.equal(calls.find(call => call[0] === 'register')[2], new TextDecoder().decode(fixture));
+    assert.equal(calls.find(call => call[0] === 'register')![2], new TextDecoder().decode(fixture));
 });
 
 test('ID mismatch causes host rollback and no successful commit', async () => {
-    const calls = [];
+    const calls: string[] = [];
     const {loader} = host({registrar: {async begin() { return {async register() { return {id: 'spoof'}; }, async commit() { calls.push('commit'); }, async rollback() { calls.push('rollback'); }}; }, async unload() {}}});
     await assert.rejects(loader.load(manifest()), codeIs('REGISTRATION_ID_MISMATCH'));
     assert.deepEqual(calls, ['rollback']);
@@ -200,10 +220,10 @@ test('rollback failure poisons loader until host recovery', async () => {
 
 test('commit failure rolls back and unload failure requires host recovery', async () => {
     let rollbacks = 0;
-    const {loader} = host({registrar: {async begin() { return {async register(code) { return {id: code.id}; }, async commit() { throw Error('commit failed'); }, async rollback() { rollbacks++; }}; }, async unload() {}}});
+    const {loader} = host({registrar: {async begin() { return {async register(code: AuthorizedCode) { return {id: code.id}; }, async commit() { throw Error('commit failed'); }, async rollback() { rollbacks++; }}; }, async unload() {}}});
     await assert.rejects(loader.load(manifest()), codeIs('LOAD_FAILED'));
     assert.equal(rollbacks, 1);
-    const failed = host({registrar: {async begin() { return {async register(code) { return {id: code.id}; }, async commit() {}, async rollback() {}}; }, async unload() { throw Error('unload failed'); }}});
+    const failed = host({registrar: {async begin() { return {async register(code: AuthorizedCode) { return {id: code.id}; }, async commit() {}, async rollback() {}}; }, async unload() { throw Error('unload failed'); }}});
     await failed.loader.load(manifest());
     await assert.rejects(failed.loader.unload(), codeIs('UNLOAD_FAILED'));
     assert.equal(failed.loader.getState().status, 'failed');
@@ -222,18 +242,18 @@ test('cancellation and timeout before authorization prevent registration', async
 
 test('registration is awaited before cancellation rollback, preventing late registration race', async () => {
     const controller = new AbortController();
-    const calls = [];
-    const {loader} = host({registrar: {async begin() { return {async register(code) { calls.push('start'); controller.abort(); await new Promise(resolve => setTimeout(resolve, 5)); calls.push('end'); return {id: code.id}; }, async commit() {}, async rollback() { calls.push('rollback'); }}; }, async unload() {}}});
+    const calls: string[] = [];
+    const {loader} = host({registrar: {async begin() { return {async register(code: AuthorizedCode) { calls.push('start'); controller.abort(); await new Promise(resolve => setTimeout(resolve, 5)); calls.push('end'); return {id: code.id}; }, async commit() {}, async rollback() { calls.push('rollback'); }}; }, async unload() {}}});
     await assert.rejects(loader.load(manifest(), {signal: controller.signal}), codeIs('CANCELLED'));
     assert.deepEqual(calls, ['start', 'end', 'rollback']);
 });
 
 test('parallel project loads are rejected before host invocation', async () => {
-    let resume;
+    let resume: ((bytes: Uint8Array) => void) | undefined;
     const {loader} = host({embeddedReader: {read() { return new Promise(resolve => { resume = resolve; }); }}});
     const first = loader.load(manifest());
     await assert.rejects(loader.load(manifest()), codeIs('BUSY'));
-    resume(fixture);
+    resume!(fixture);
     await first;
 });
 
@@ -249,16 +269,16 @@ test('diagnostic callback exceptions do not bypass verification', async () => {
 });
 
 test('fetch port disables redirects/credentials and streams a bounded response', async () => {
-    let request;
-    const fetcher = createFetchPort(async (url, options) => {
+    let request: {url: unknown; options: RequestInit | undefined} | undefined;
+    const fetcher = createFetchPort((async (url: string, options: RequestInit) => {
         request = {url, options};
         return {ok: true, url, redirected: false, headers: new Headers(), body: new Response(fixture).body};
-    });
+    }) as unknown as typeof fetch);
     const controller = new AbortController();
     const result = await fetcher.fetch('https://example.org/fixture.js', {signal: controller.signal, maxBytes: 1024});
     assert.deepEqual(result.bytes, fixture);
-    assert.equal(request.options.redirect, 'error');
-    assert.equal(request.options.credentials, 'omit');
-    assert.equal(request.options.referrerPolicy, 'no-referrer');
+    assert.equal(request!.options!.redirect, 'error');
+    assert.equal(request!.options!.credentials, 'omit');
+    assert.equal(request!.options!.referrerPolicy, 'no-referrer');
     await assert.rejects(fetcher.fetch('https://example.org/fixture.js', {signal: controller.signal, maxBytes: 2}), codeIs('INVALID_BYTES'));
 });

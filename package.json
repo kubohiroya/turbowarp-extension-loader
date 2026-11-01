@@ -82,13 +82,16 @@
     "webpack4.cjs"
   ],
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist', {recursive: true, force: true})\" && tsc",
-    "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test",
+    "build": "node -e \"require('node:fs').rmSync('dist', {recursive: true, force: true})\" && tsc -p tsconfig.build.json",
+    "test": "npm run build && node --test test/*.test.ts",
+    "pack:check": "npm pack --dry-run --ignore-scripts",
+    "check": "npm run typecheck && npm test && npm run pack:check",
     "prepare": "npm run build"
   },
   "devDependencies": {
     "@turbowarp/jszip": "3.12.0",
+    "@types/node": "26.6.6",
     "typescript": "6.0.3"
   },
   "publishConfig": {
