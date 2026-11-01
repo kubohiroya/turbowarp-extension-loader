@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noCheck": false,
+    "strict": true,
+    "noEmit": true
+  },
+  "include": [
+    "ts-src/src/memory-cache.ts",
+    "ts-src/src/cache-gzip.ts"
+  ]
+}
