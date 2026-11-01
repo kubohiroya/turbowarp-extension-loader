@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": "ts-src",
+    "outDir": ".",
+    "noCheck": true,
+    "skipLibCheck": true,
+    "declaration": false,
+    "sourceMap": false,
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ]
+  },
+  "include": [
+    "ts-src/**/*.ts"
+  ],
+  "exclude": [
+    "test",
+    "node_modules"
+  ]
+}
