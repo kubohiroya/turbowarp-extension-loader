@@ -37,6 +37,10 @@
     "./memory-cache": {
       "types": "./src/memory-cache.d.ts",
       "default": "./src/memory-cache.js"
+    },
+    "./indexeddb-cache": {
+      "types": "./src/indexeddb-cache.d.ts",
+      "default": "./src/indexeddb-cache.js"
     }
   },
   "scripts": {
