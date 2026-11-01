@@ -3,6 +3,8 @@
   "compilerOptions": {
     // Tests reach for Array.prototype.findLastIndex; the published core stays on the ES2022 surface.
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    // Internal modules outside "exports" are unit-tested from source, so dist need not exist to typecheck.
+    "allowImportingTsExtensions": true,
     // Tests deliberately pass values the public types forbid, and keep unused helpers close to their cases.
     "noUnusedLocals": false,
     "noUnusedParameters": false

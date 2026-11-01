@@ -25,7 +25,8 @@ test('IndexedDB cache signals cancellation before opening a transaction', async 
 });
 
 test('gzip cache codec round-trips JS and rejects excessive decompression', async () => {
-    const {gzipBytes, gunzipBytes} = await import('../dist/cache-gzip.js');
+    // Not a package export: the gzip codec is an internal module, so it is unit-tested from source.
+    const {gzipBytes, gunzipBytes} = await import('../src/cache-gzip.ts');
     const input = new TextEncoder().encode('const value = 42;\\n'.repeat(400));
     const compressed = await gzipBytes(input);
     assert.ok(compressed.byteLength < input.byteLength);
