@@ -7,7 +7,6 @@ export interface IndexedDBContentCacheOptions {
     maxBytes?: number;
     /** Maximum decompressed JS size (default 8 MiB). */
     maxDecompressedBytes?: number;
-    ttlMs?: number;
     now?: () => number;
 }
 /** Persistent browser cache for SHA-256-addressed extension bytes. Requires IndexedDB. */
@@ -20,7 +19,7 @@ export type IndexedDBContentCache = Readonly<{
 }>;
 
 /** The shape put() writes. Stored records are still untrusted and checked by validRecord before use. */
-interface CacheRecord {key: string; format: 'gzip-v1'; bytes: ArrayBuffer; originalBytes: number; expires: number; lastAccess?: number}
+interface CacheRecord {key: string; format: 'gzip-v1'; bytes: ArrayBuffer; originalBytes: number; lastAccess?: number}
 
 /** Persistent, content-addressed cache. The Loader independently verifies SHA-256 on every hit.
  * Storage is untrusted: this adapter is not an authorization or integrity boundary.
@@ -30,13 +29,12 @@ export function createIndexedDBContentCache({
     databaseName = 'turbowarp-plus-extension-cache',
     maxBytes = 32 * 1024 * 1024,
     maxDecompressedBytes = 8 * 1024 * 1024,
-    ttlMs = 30 * 24 * 60 * 60 * 1000,
     now = Date.now
 }: IndexedDBContentCacheOptions = {}): IndexedDBContentCache {
     if (!indexedDB || typeof indexedDB.open !== 'function') throw new Error('IndexedDB unavailable');
     if (typeof databaseName !== 'string' || !databaseName || !Number.isSafeInteger(maxBytes) || maxBytes < 1 ||
         !Number.isSafeInteger(maxDecompressedBytes) || maxDecompressedBytes < 1 ||
-        !Number.isSafeInteger(ttlMs) || ttlMs < 1 || typeof now !== 'function') throw new TypeError('Invalid IndexedDB cache options');
+        typeof now !== 'function') throw new TypeError('Invalid IndexedDB cache options');
 
     let dbPromise: Promise<IDBDatabase> | undefined;
     function open(): Promise<IDBDatabase> {
@@ -72,18 +70,17 @@ export function createIndexedDBContentCache({
     }
     const keyValid = (key: unknown) => typeof key === 'string' && /^[a-f0-9]{64}$/.test(key);
     const validBytes = (value: unknown) => value instanceof Uint8Array;
-    const validRecord = (entry: CacheRecord | undefined, time: number) => !!entry && entry.format === 'gzip-v1' &&
+    const validRecord = (entry: CacheRecord | undefined) => !!entry && entry.format === 'gzip-v1' &&
         entry.bytes instanceof ArrayBuffer && Number.isSafeInteger(entry.originalBytes) &&
         entry.originalBytes >= 0 && entry.originalBytes <= maxDecompressedBytes &&
-        Number.isFinite(entry.expires) && entry.expires > time &&
         entry.bytes.byteLength <= maxBytes;
-    function sweep(store: IDBObjectStore, time: number, protectedKey: string | null = null) {
+    function sweep(store: IDBObjectStore, protectedKey: string | null = null) {
         const request = store.getAll();
         request.onsuccess = () => {
             let total = 0;
             const kept: CacheRecord[] = [];
             for (const record of request.result as CacheRecord[]) {
-                if (!validRecord(record, time)) { store.delete(record.key); continue; }
+                if (!validRecord(record)) { store.delete(record.key); continue; }
                 total += record.bytes.byteLength;
                 kept.push(record);
             }
@@ -106,7 +103,7 @@ export function createIndexedDBContentCache({
                 request.onsuccess = () => {
                     const entry: CacheRecord | undefined = request.result;
                     if (!entry) { set(undefined); return; }
-                    if (!validRecord(entry, now())) { store.delete(key); set(undefined); return; }
+                    if (!validRecord(entry)) { store.delete(key); set(undefined); return; }
                     entry.lastAccess = now();
                     store.put(entry);
                     set({bytes: entry.bytes.slice(0), originalBytes: entry.originalBytes});
@@ -131,9 +128,9 @@ export function createIndexedDBContentCache({
                 const time = now();
                 if (compressed.byteLength <= maxBytes) {
                     store.put({key, format: 'gzip-v1', bytes: compressed.buffer, originalBytes,
-                        expires: time + ttlMs, lastAccess: time} satisfies CacheRecord);
+                        lastAccess: time} satisfies CacheRecord);
                 } else store.delete(key);
-                sweep(store, time, compressed.byteLength <= maxBytes ? key : null);
+                sweep(store, compressed.byteLength <= maxBytes ? key : null);
             });
         },
         async clear() {
