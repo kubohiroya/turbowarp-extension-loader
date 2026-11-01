@@ -1,3 +1,5 @@
+import type {Manifest, ExtensionSpec, LoaderPorts, LoaderOptions, ExtensionLoader, FetchPort, ReadOptions, FetchResult, AuthorizedCode} from './loader-types.js';
+export type {ExtensionSource, ExtensionSpec, Manifest, ResolvedCode, AuthorizationDecision, AuthorizedCode, LoaderPorts, LoaderOptions, ExtensionLoader, FetchPort, FetchResult, ReadOptions, RegistrationTransaction, LoadResult, OperationOptions} from './loader-types.js';
 const DEFAULTS = Object.freeze({maxExtensions: 64, maxBytes: 1024 * 1024, maxTotalBytes: 8 * 1024 * 1024, timeoutMs: 30000});
 const RESERVED_IDS = new Set(['pen', 'music', 'videoSensing', 'text2speech', 'translate', 'microbit', 'ev3', 'boost', 'wedo2', 'gdxfor', 'makeymakey']);
 const ID = /^[a-zA-Z][a-zA-Z0-9]{0,63}$/;
@@ -128,16 +130,16 @@ async function guarded(task, signal) {
 }
 
 /** Browser fetch port rejects redirects and streams with a byte limit. */
-export function createFetchPort(fetchImpl = globalThis.fetch) {
+export function createFetchPort(fetchImpl: typeof fetch = globalThis.fetch): FetchPort {
     return Object.freeze({
-        async fetch(url, {signal, maxBytes}) {
+        async fetch(url: string, {signal, maxBytes}: ReadOptions): Promise<FetchResult> {
             const response = await fetchImpl(remoteURL(url), {signal, redirect: 'error', credentials: 'omit', referrerPolicy: 'no-referrer'});
             if (!response.ok || response.redirected || response.type === 'opaque' || response.url !== remoteURL(url)) fail('FETCH_FAILED', 'Remote response is unavailable or redirected');
             const declared = response.headers.get('content-length');
             if (declared !== null && Number(declared) > maxBytes) fail('INVALID_BYTES', 'Remote extension exceeds byte limit');
             if (!response.body) fail('FETCH_FAILED', 'Remote response has no readable body');
             const reader = response.body.getReader();
-            const parts = [];
+            const parts: Uint8Array[] = [];
             let size = 0;
             try {
                 while (true) {
@@ -161,7 +163,7 @@ export function createFetchPort(fetchImpl = globalThis.fetch) {
 }
 
 /** The host owns all ports, especially trust decisions and privileged execution. */
-export function createExtensionLoader(ports, options = {}) {
+export function createExtensionLoader(ports: LoaderPorts, options: LoaderOptions = {}): ExtensionLoader {
     const limits = {...DEFAULTS, ...options};
     for (const key of Object.keys(DEFAULTS)) if (!Number.isSafeInteger(limits[key]) || limits[key] < 1) fail('INVALID_OPTIONS', `Invalid ${key}`);
     if (typeof ports?.trustProvider?.authorize !== 'function' || typeof ports?.registrar?.begin !== 'function' || typeof ports?.registrar?.unload !== 'function') fail('INVALID_PORT', 'Explicit host trust and transactional registrar ports are required');
