@@ -6,7 +6,6 @@ export function createIndexedDBContentCache(options?: {
     maxBytes?: number;
     /** Maximum decompressed JS size (default 8 MiB). */
     maxDecompressedBytes?: number;
-    ttlMs?: number;
     now?: () => number;
 }): Readonly<{
     get(key: string, options?: {signal?: AbortSignal}): Promise<Uint8Array | undefined>;
