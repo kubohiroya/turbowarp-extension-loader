@@ -92,7 +92,7 @@ npm ci --ignore-scripts
 npm test
 ```
 
-Node.js >=24 の組み込み test runner / Web Crypto を使い、Loader 本体を依存パッケージなしで headless 検証します。ZIP codec の fixture 検証には開発依存の `@turbowarp/jszip` を使います。`test/fixtures/extension.js` はホストに渡すバイト列の fixture で、テスト中に評価しません。実ネットワーク、CORS / CSP、VM の private API、ブラウザー拡張実行の検証とは区別します。
+Node.js >=26 の組み込み test runner / Web Crypto を使い、Loader 本体を依存パッケージなしで headless 検証します。ZIP codec の fixture 検証には開発依存の `@turbowarp/jszip` を使います。`test/fixtures/extension.js` はホストに渡すバイト列の fixture で、テスト中に評価しません。実ネットワーク、CORS / CSP、VM の private API、ブラウザー拡張実行の検証とは区別します。
 
 ## 導入と切戻し
 
