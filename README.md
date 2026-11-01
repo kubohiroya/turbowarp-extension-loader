@@ -59,6 +59,9 @@ await loader.unload();
 
 ## IndexedDB 永続キャッシュ（ブラウザホスト用）
 
+固定された npm `name@exact-version` のCDN配信を想定し、**cache first** とします。ハッシュで固定されたキャッシュがあればオンライン・オフラインを問わずCDNへ問い合わせません。キャッシュミス時のみ既存Remote Fetch Portが取得します。URLに `latest`、semver範囲、バージョン省略等の可変指定を使わないことをホスト側で保証してください。キャッシュの保持にはTTLを設けず、容量超過時のLRU、明示消去、ブラウザのストレージ削除のみで削除します。gzip展開後のSHA-256照合とunsandboxed実行認可は毎回必要です。
+
+
 `./indexeddb-cache` はリモートで取得・SHA-256 検証済みの JS バイト列を、ブラウザ再起動をまたいで再利用するための **任意の Cache Port アダプター**です。Loader コア側には IndexedDB 依存を持たせません。
 
 ```js
@@ -68,14 +71,13 @@ import {createIndexedDBContentCache}
 const cache = createIndexedDBContentCache({
     databaseName: 'turbowarp-plus-extension-cache',
     maxBytes: 32 * 1024 * 1024, // compressed storage quota
-    maxDecompressedBytes: 8 * 1024 * 1024,
-    ttlMs: 30 * 24 * 60 * 60 * 1000
+    maxDecompressedBytes: 8 * 1024 * 1024
 });
 const loader = createExtensionLoader({...hostPorts, cache});
 // 終了・ログアウトなどの明示操作で await cache.clear() / await cache.close()
 ```
 
-- キーは lowercase SHA-256 hex。**保存する値は生JSではなく gzip 圧縮されたバイト列**（format: `gzip-v1`、元サイズを併記）。取得時に展開して Loader に返します。既定32 MiB は**圧縮後の総保存容量**、展開後の最大サイズは8 MiB、TTLは30日。容量超過時は最終アクセス順LRUで削除します。旧形式の非圧縮エントリは読み込まず削除します。
+- キーは lowercase SHA-256 hex。**保存する値は生JSではなく gzip 圧縮されたバイト列**（format: `gzip-v1`、元サイズを併記）。取得時に展開して Loader に返します。既定32 MiB は**圧縮後の総保存容量**、展開後の最大サイズは8 MiB、有効期限なし。容量超過時は最終アクセス順LRUで削除します。旧形式の非圧縮エントリは読み込まず削除します。
 - 展開は出力サイズを制限し、改ざん・gzip破損や展開超過を拒否します。ブラウザの `CompressionStream` / `DecompressionStream` が必要です。非対応環境で生JSへ黙って切り替えて保存することはありません。
 - キャッシュを利用した際にも Loader コアが **取得バイト列の SHA-256 を再検証** し、毎回 trustProvider の権限判定を適用します。キャッシュが信頼判断を代行することはありません。
 - キャッシュは IndexedDB を使用できるブラウザ origin に紐付き、ブラウザのストレージ削除・プライベートモード・容量不足等で消える場合があります。ブラウザからの永続化保証はありません。
