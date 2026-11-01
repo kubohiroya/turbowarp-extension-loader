@@ -1,6 +1,6 @@
 # turbowarp-extension-loader
 
-[Editor Issue #4](https://github.com/kubohiroya/turbowarp-plus-editor/issues/4) の GUI 非依存コアです。独立Gitリポジトリで管理する開発パッケージで、`private: true`、`UNLICENSED` としています。既存の配布ライブラリや npm パッケージを置き換えません。
+[Editor Issue #4](https://github.com/kubohiroya/turbowarp-plus-editor/issues/4) の GUI 非依存コアです。MPL-2.0 で npm（`@kubohiroya/turbowarp-extension-loader`）に公開します。既存の配布ライブラリや npm パッケージを置き換えません。
 
 ## 実装範囲
 
@@ -86,7 +86,7 @@ const loader = createExtensionLoader({...hostPorts, cache});
 
 ## ソースとビルド
 
-ソースは `src/*.ts` の TypeScript です。`npm run build`（`tsc`）が ES2022 の ESM と型宣言を `dist/` に出力し、`exports`・`main`/`module`・webpack 4 用のルートファイル（`packager.js` など）はすべて `dist/` を指します。`dist/` は Git に含めず、Git 依存としてインストールされるときに `prepare` スクリプトがビルドします。webpack 4 では従来どおり `./webpack4` の Babel 設定が `dist/` を変換します。
+ソースは `src/*.ts` の TypeScript です。`npm run build`（`tsc`）が ES2022 の ESM と型宣言を `dist/` に出力し、`exports`・`main`/`module`・webpack 4 用のルートファイル（`packager.js` など）はすべて `dist/` を指します。`dist/` は Git に含めず、Git 依存としてインストールされるときに `prepare` スクリプトがビルドします。npm パッケージにはビルド済みの `dist/` を含めます。webpack 4 では従来どおり `./webpack4` の Babel 設定が `dist/` を変換します。
 
 ## 検証
 
@@ -122,7 +122,7 @@ npm test
 
 ## JSファイル・URLからの作品追加API
 
-[Editor Issue #11](https://github.com/kubohiroya/turbowarp-plus-editor/issues/11) の専用UIは `./project-authoring` の `prepareExtensionAddition` を呼び出します。UIはIDとファイルまたはURLを渡すだけで、Manifest編集・URLポリシー・SHA-256計算はこのコアが担当します。
+`./project-authoring` の `prepareExtensionAddition` は、[Editor Issue #11](https://github.com/kubohiroya/turbowarp-plus-editor/issues/11) の専用UI（カスタム拡張画面）のために作りました。TurboWarp-Plus-Editor は2026-11-01にこの画面をやめ、拡張の入口を TurboWarp Plus の一覧（下の `./project-catalog`）だけにしたため、今は Editor から使っていません。UIはIDとファイルまたはURLを渡すだけで、Manifest編集・URLポリシー・SHA-256計算はこのコアが担当します。
 
 ```js
 import JSZip from '@turbowarp/jszip';
@@ -158,4 +158,8 @@ Manifestの実行要求は `sandboxed` と `unsandboxed` の両方を扱いま�
 
 ## 公開範囲
 
-Loaderコアと型・ドキュメントはこのGitHubリポジトリから提供します。npmパッケージは `private: true` のままで、ホストは検証したコミットを固定して利用してください。Editor・GUI・VM・Packagerの統合実装は別のリポジトリで管理され、このコアの公開によってそれらが更新・配信されることはありません。導入時はホスト側の互換性検証と、起動時固定・既定OFFのフラグが必要です。
+Loaderコアと型・ドキュメントを、MPL-2.0 で npm に公開します。タグ `v<version>` を push すると、`release.yml` が検証・pack・GitHub Releaseへの添付・npmへの公開（Trusted Publisher、provenance付き）を行います。初回の版だけは、npm にパッケージがまだないため Trusted Publisher を設定できません。手作業で公開してから、npmjs.com で `release.yml` を Trusted Publisher に設定します。Editor・GUI・VM・Packagerの統合実装は別のリポジトリで管理され、このコアの公開によってそれらが更新・配信されることはありません。導入時はホスト側の互換性検証と、起動時固定・既定OFFのフラグが必要です。
+
+## ライセンス
+
+MPL-2.0。全文は [LICENSE](LICENSE) を参照してください。

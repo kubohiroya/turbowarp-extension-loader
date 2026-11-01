@@ -1,10 +1,9 @@
 {
   "name": "@kubohiroya/turbowarp-extension-loader",
-  "version": "0.0.0-local",
-  "private": true,
+  "version": "0.1.0",
   "type": "module",
   "description": "Host-independent verified TurboWarp Plus extension loading core",
-  "license": "UNLICENSED",
+  "license": "MPL-2.0",
   "engines": {
     "node": ">=26"
   },
@@ -53,7 +52,9 @@
     "project-codec.js",
     "session-trust.js",
     "webpack4.cjs",
-    "docs"
+    "docs",
+    "LICENSE",
+    "README.md"
   ],
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist', {recursive: true, force: true})\" && tsc",
@@ -75,5 +76,8 @@
   "bugs": {
     "url": "https://github.com/kubohiroya/turbowarp-plus-editor/issues/4"
   },
-  "homepage": "https://github.com/kubohiroya/turbowarp-extension-loader#readme"
+  "homepage": "https://github.com/kubohiroya/turbowarp-extension-loader#readme",
+  "publishConfig": {
+    "access": "public"
+  }
 }
