@@ -7,13 +7,12 @@ export function createIndexedDBContentCache({
     databaseName = 'turbowarp-plus-extension-cache',
     maxBytes = 32 * 1024 * 1024,
     maxDecompressedBytes = 8 * 1024 * 1024,
-    ttlMs = 30 * 24 * 60 * 60 * 1000,
     now = Date.now
 } = {}) {
     if (!indexedDB || typeof indexedDB.open !== 'function') throw new Error('IndexedDB unavailable');
     if (typeof databaseName !== 'string' || !databaseName || !Number.isSafeInteger(maxBytes) || maxBytes < 1 ||
         !Number.isSafeInteger(maxDecompressedBytes) || maxDecompressedBytes < 1 ||
-        !Number.isSafeInteger(ttlMs) || ttlMs < 1 || typeof now !== 'function') throw new TypeError('Invalid IndexedDB cache options');
+        typeof now !== 'function') throw new TypeError('Invalid IndexedDB cache options');
 
     let dbPromise;
     function open() {
@@ -51,7 +50,6 @@ export function createIndexedDBContentCache({
     const validRecord = (entry, time) => !!entry && entry.format === 'gzip-v1' &&
         entry.bytes instanceof ArrayBuffer && Number.isSafeInteger(entry.originalBytes) &&
         entry.originalBytes >= 0 && entry.originalBytes <= maxDecompressedBytes &&
-        Number.isFinite(entry.expires) && entry.expires > time &&
         entry.bytes.byteLength <= maxBytes;
     function sweep(store, time, protectedKey = null) {
         const request = store.getAll();
@@ -107,7 +105,7 @@ export function createIndexedDBContentCache({
                 const time = now();
                 if (compressed.byteLength <= maxBytes) {
                     store.put({key, format: 'gzip-v1', bytes: compressed.buffer, originalBytes,
-                        expires: time + ttlMs, lastAccess: time});
+                        lastAccess: time});
                 } else store.delete(key);
                 sweep(store, time, compressed.byteLength <= maxBytes ? key : null);
             });
