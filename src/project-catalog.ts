@@ -1,27 +1,47 @@
-import {LoaderError, validateManifest} from './index.js';
-import {createProjectIO} from './project-codec.js';
+import {LoaderError, validateManifest, type ExecutionMode, type ExtensionSource, type FetchPort, type FetchResult,
+    type LoaderOptions, type LoaderPorts, type Manifest} from './index.js';
+import {createProjectIO, type ArchiveLimits, type ZipConstructor} from './project-codec.js';
 import {readPreparedProject} from './project-data.js';
 import {collectVerifiedCodes} from './verified-code.js';
 
+export interface CatalogExtensionRequest {
+    id: string;
+    url: string;
+    distribution: 'embedded' | 'remote';
+    execution: ExecutionMode;
+    dependencies?: string[];
+    version?: string;
+}
+export interface CatalogOptions {
+    zip: ZipConstructor;
+    signal?: AbortSignal;
+    loaderOptions?: LoaderOptions;
+    archiveOptions?: ArchiveLimits;
+}
+export type CatalogPorts = Pick<LoaderPorts, 'fetcher' | 'trustProvider' | 'cache' | 'diagnostics'>;
+
 const encoder = new TextEncoder();
-const digest = async bytes => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
+const digest = async (bytes: BufferSource) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
     value => value.toString(16).padStart(2, '0')).join('');
-const fail = (code, message, id) => { throw new LoaderError(code, message, id); };
+function fail(code: string, message: string, id?: string): never { throw new LoaderError(code, message, id); }
 
 /** Read project-owned distribution requests; these records never grant execution permission. */
-export async function readProjectAuthoringState(input, {zip, signal, archiveOptions} = {}) {
+export function readProjectAuthoringState(input: unknown, options: CatalogOptions): Promise<Manifest | null>;
+export async function readProjectAuthoringState(input: unknown, {zip, signal, archiveOptions}: Partial<CatalogOptions> = {}): Promise<Manifest | null> {
     const io = createProjectIO({zip, ...archiveOptions});
     const prepared = await io.prepare(input, {signal});
     return prepared.manifest;
 }
 
 /** Stage an entire catalog selection before the host changes its active project. */
-export async function prepareCatalogExtensionChanges(input, requests, ports, {
+export function prepareCatalogExtensionChanges(input: unknown, requests: CatalogExtensionRequest[],
+    ports: CatalogPorts, options: CatalogOptions): Promise<Readonly<{projectBytes: Uint8Array; manifest: Manifest}>>;
+export async function prepareCatalogExtensionChanges(input: unknown, requests: CatalogExtensionRequest[], ports: CatalogPorts, {
     zip: Zip, signal: externalSignal, loaderOptions = {}, archiveOptions
-} = {}) {
+}: Partial<CatalogOptions> = {}): Promise<Readonly<{projectBytes: Uint8Array; manifest: Manifest}>> {
     const limits = {maxExtensions: 64, maxBytes: 1024 * 1024, maxTotalBytes: 8 * 1024 * 1024,
         timeoutMs: 30000, ...loaderOptions};
-    for (const key of ['maxExtensions', 'maxBytes', 'maxTotalBytes', 'timeoutMs']) {
+    for (const key of ['maxExtensions', 'maxBytes', 'maxTotalBytes', 'timeoutMs'] as const) {
         if (!Number.isSafeInteger(limits[key]) || limits[key] < 1) fail('INVALID_OPTIONS', `Invalid ${key}`);
     }
     if (!Array.isArray(requests) || requests.length > limits.maxExtensions) {
@@ -34,17 +54,17 @@ export async function prepareCatalogExtensionChanges(input, requests, ports, {
         input = input.slice(0);
     } else if (typeof input !== 'string' && !(input instanceof Blob)) input = JSON.stringify(input);
     const controller = new AbortController();
-    const abort = () => controller.abort(externalSignal.reason);
+    const abort = () => controller.abort(externalSignal!.reason);
     if (externalSignal?.aborted) abort();
     else externalSignal?.addEventListener('abort', abort, {once: true});
     const signal = controller.signal;
     const check = () => {
         if (signal.aborted) fail(signal.reason?.code === 'TIMEOUT' ? 'TIMEOUT' : 'CANCELLED', 'Catalog changes interrupted');
     };
-    const wait = async task => {
+    const wait = async <T>(task: () => T | PromiseLike<T>): Promise<T> => {
         check();
-        let cancel;
-        const cancelled = new Promise((resolve, reject) => {
+        let cancel!: () => void;
+        const cancelled = new Promise<never>((_resolve, reject) => {
             cancel = () => { try { check(); } catch (error) { reject(error); } };
             signal.addEventListener('abort', cancel, {once: true});
         });
@@ -55,7 +75,7 @@ export async function prepareCatalogExtensionChanges(input, requests, ports, {
     const timer = setTimeout(() => controller.abort(new LoaderError('TIMEOUT', 'Catalog changes timed out')),
         limits.timeoutMs);
     try {
-        const seen = new Set();
+        const seen = new Set<string>();
         const choices = requests.map(request => {
             if (!request || !['remote', 'embedded'].includes(request.distribution) || seen.has(request.id)) {
                 fail('INVALID_ADDITION', 'Invalid or duplicate catalog selection', request?.id);
@@ -72,22 +92,23 @@ export async function prepareCatalogExtensionChanges(input, requests, ports, {
         const io = createProjectIO({zip: Zip, ...archiveOptions});
         const prepared = await wait(() => io.prepare(input, {signal}));
         io.activate(prepared.context);
-        const {project, files} = await wait(() => readPreparedProject(prepared, io, Zip));
+        // Like the JavaScript API, a missing ZIP implementation fails where it is first needed.
+        const {project, files} = await wait(() => readPreparedProject(prepared, io, Zip!));
         if (project.extensions !== undefined && (!Array.isArray(project.extensions) ||
             project.extensions.some(id => typeof id !== 'string'))) fail('INVALID_PROJECT', 'Project extensions must be an ID array');
         // Inspect fixed existing bytes without evaluating them or granting host execution consent.
-        const oldRecords = prepared.manifest ? await wait(() => collectVerifiedCodes(prepared.manifest,
+        const oldRecords = prepared.manifest ? await wait(() => collectVerifiedCodes(prepared.manifest!,
             {...ports, diagnostics: undefined, embeddedReader: io.embeddedReader,
                 trustProvider: {async authorize(code) { return {allowed: true, scope: 'digest', sha256: code.sha256}; }}},
             loaderOptions, signal)) : [];
-        const previous = new Map(oldRecords.map(record => [record.id, record]));
-        const extensions = new Map((prepared.manifest?.extensions || []).map(spec => [spec.id, spec]));
-        const fetched = new Map();
-        async function fetchBytes(url) {
-            if (fetched.has(url)) return fetched.get(url);
+        const previous = new Map(oldRecords.map(record => [record.id, record] as const));
+        const extensions = new Map<string, unknown>((prepared.manifest?.extensions || []).map(spec => [spec.id, spec] as const));
+        const fetched = new Map<string, Uint8Array<ArrayBuffer>>();
+        async function fetchBytes(url: string): Promise<Uint8Array<ArrayBuffer>> {
+            if (fetched.has(url)) return fetched.get(url)!;
             if (typeof ports.fetcher?.fetch !== 'function') fail('INVALID_PORT', 'A catalog fetch port is required');
-            let response;
-            try { response = await wait(() => ports.fetcher.fetch(url, {signal, maxBytes})); }
+            let response: FetchResult;
+            try { response = await wait(() => ports.fetcher!.fetch(url, {signal, maxBytes})); }
             catch (cause) {
                 if (cause instanceof LoaderError) throw cause;
                 throw new LoaderError('LOAD_FAILED', 'Catalog extension could not be fetched', undefined, cause);
@@ -104,10 +125,11 @@ export async function prepareCatalogExtensionChanges(input, requests, ports, {
         }
         for (const choice of choices) {
             const old = previous.get(choice.id);
-            const bytes = old ? encoder.encode(old.code) : await fetchBytes(choice.source.url);
+            // Every catalog request was validated as a Remote source above.
+            const bytes = old ? encoder.encode(old.code) : await fetchBytes((choice.source as {url: string}).url);
             const sha256 = await wait(() => digest(bytes));
             if (old && old.sha256 !== sha256) fail('CONVERSION_INTEGRITY', 'Source conversion changed bytes', choice.id);
-            const source = choice.distribution === 'embedded' ?
+            const source: ExtensionSource = choice.distribution === 'embedded' ?
                 {type: 'embedded', path: `extensions/${choice.id}-${sha256}.js`} : choice.source;
             if (source.type === 'remote') {
                 const remoteBytes = old ? await fetchBytes(source.url) : bytes;
@@ -132,14 +154,14 @@ export async function prepareCatalogExtensionChanges(input, requests, ports, {
         for (const spec of manifest.extensions) delete urls[spec.id];
         project.extensionURLs = urls;
         files['project.json'] = encoder.encode(JSON.stringify(project));
-        const archive = new Zip();
+        const archive = new Zip!();
         for (const [name, content] of Object.entries(files)) archive.file(name, content, {dir: name.endsWith('/'), createFolders: false});
-        const projectBytes = await wait(() => archive.generateAsync({type: 'uint8array', compression: 'STORE'}));
+        const projectBytes: Uint8Array = await wait(() => archive.generateAsync({type: 'uint8array', compression: 'STORE'}));
         const candidate = await wait(() => io.prepare(projectBytes, {signal}));
         io.activate(candidate.context);
-        const fetcher = {fetch(url, options) {
-            return fetched.has(url) ? Promise.resolve({bytes: new Uint8Array(fetched.get(url)), finalURL: url, redirects: []}) :
-                ports.fetcher.fetch(url, options);
+        const fetcher: FetchPort = {fetch(url, options) {
+            return fetched.has(url) ? Promise.resolve({bytes: new Uint8Array(fetched.get(url)!), finalURL: url, redirects: []}) :
+                ports.fetcher!.fetch(url, options);
         }};
         // The common Loader validates the full dependency graph and asks the host about every final request.
         await wait(() => collectVerifiedCodes(manifest, {...ports, fetcher, embeddedReader: io.embeddedReader}, loaderOptions, signal));

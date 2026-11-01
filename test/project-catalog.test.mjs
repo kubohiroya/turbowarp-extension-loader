@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import Zip from '@turbowarp/jszip';
-import {prepareCatalogExtensionChanges, readProjectAuthoringState} from '../src/project-catalog.js';
+import {prepareCatalogExtensionChanges, readProjectAuthoringState} from '@kubohiroya/turbowarp-extension-loader/project-catalog';
 
 const encoder = new TextEncoder();
 const content = id => encoder.encode(`\ufeffglobalThis.__catalogCodeExecuted=true;\nScratch.extensions.register({getInfo(){return {id:'${id}',blocks:[]}}});\n`);

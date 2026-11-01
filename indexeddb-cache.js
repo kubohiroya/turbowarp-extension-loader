@@ -1,1 +1,1 @@
-export {createIndexedDBContentCache} from './src/indexeddb-cache.js';
+export {createIndexedDBContentCache} from './dist/indexeddb-cache.js';

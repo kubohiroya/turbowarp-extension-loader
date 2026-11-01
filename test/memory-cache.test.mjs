@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createMemoryContentCache} from '../src/memory-cache.js';
+import {createMemoryContentCache} from '@kubohiroya/turbowarp-extension-loader/memory-cache';
 const a = 'a'.repeat(64), b = 'b'.repeat(64), c = 'c'.repeat(64);
 test('cache returns private copies and expires content using a host clock', async () => {
     let time = 10;

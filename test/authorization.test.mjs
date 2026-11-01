@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {createExtensionLoader, isAuthorizedCode} from '../src/index.js';
+import {createExtensionLoader, isAuthorizedCode} from '@kubohiroya/turbowarp-extension-loader';
 
 test('authorization proof cannot be forged with manifest fields or a copied record', async () => {
     const bytes = new TextEncoder().encode('/* approved bytes */');

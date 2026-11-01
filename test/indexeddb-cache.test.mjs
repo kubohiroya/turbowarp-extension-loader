@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {createIndexedDBContentCache} from '../src/indexeddb-cache.js';
+import {createIndexedDBContentCache} from '@kubohiroya/turbowarp-extension-loader/indexeddb-cache';
 
 const key = 'a'.repeat(64);
 test('IndexedDB cache rejects unavailable storage and invalid settings', () => {
@@ -23,7 +23,7 @@ test('IndexedDB cache signals cancellation before opening a transaction', async 
 });
 
 test('gzip cache codec round-trips JS and rejects excessive decompression', async () => {
-    const {gzipBytes, gunzipBytes} = await import('../src/cache-gzip.js');
+    const {gzipBytes, gunzipBytes} = await import('../dist/cache-gzip.js');
     const input = new TextEncoder().encode('const value = 42;\\n'.repeat(400));
     const compressed = await gzipBytes(input);
     assert.ok(compressed.byteLength < input.byteLength);

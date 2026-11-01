@@ -38,7 +38,7 @@ await loader.unload();
 
 `trustProvider` はホストが所有します。要求 ID、バージョン、申告発行者、取得元、SHA-256、要求 capability を受け取り、承認 UI やホストの固定ポリシーを使って判断してください。作品内の名前・ドメイン・発行者文字列だけを承認の根拠にしません。SHA-256 は内容の一貫性を保証するだけで安全性や発行者の本人性は保証しません。ホストは承認履歴の保存・取消・有効期限を管理します。
 
-登録ポートは `begin({signal})` → `register(authorizedCode,{signal})` → `commit({signal})` を実装し、どの登録が失敗しても `rollback()` で登録状態を復旧できる必要があります。`register()` は実際の `getInfo().id` と対応する登録結果 `{id}` を返します。ホストは既存 VM 内の ID 競合も拒否してください。`unload(ids)` は依存の逆順で呼ばれます。公開 `.d.ts` に契約を記載しています。
+登録ポートは `begin({signal})` → `register(authorizedCode,{signal})` → `commit({signal})` を実装し、どの登録が失敗しても `rollback()` で登録状態を復旧できる必要があります。`register()` は実際の `getInfo().id` と対応する登録結果 `{id}` を返します。ホストは既存 VM 内の ID 競合も拒否してください。`unload(ids)` は依存の逆順で呼ばれます。契約は TypeScript の型（`dist/*.d.ts` として公開）に記載しています。
 
 実VMアダプターは `scratch-gui/src/lib/tw-plus-extension-registrar.js` が所有します。VMへ追加する `getExtensionServicePort()` と組み合わせ、同一VMの登録テーブル・dispatchサービスの所有権を追跡してrollback/unloadします。Editorと別バンドルのPackagerもVM内の同じサービスを利用します。標準VMを使用する同一バンドルではdispatch同一性を確認し、未対応の別バンドルでは拒否します。Loaderコア自身はVM private APIへ依存しません。
 
@@ -55,7 +55,6 @@ await loader.unload();
 - ZIP の実装は `createProjectIO({zip: JSZip})` に注入します。core の codec が ZIP central directory を直接検査し、重複・経路・宣言容量を検証してから、ストリーム展開の実容量と CRC32 を検査します。外部実装の archive port を使う場合も同等の検証が必要です。
 
 既定値は最大64拡張、1拡張1 MiB、合計8 MiB、取得・認可30秒です。データURLやHTTPの開発モード例外はありません。標準 TurboWarp / 非対応エディターが独自 Manifest と ZIP エントリを破棄する可能性があるため、保持対応のないホストでの再保存は移行手段になりません。
-
 
 ## IndexedDB 永続キャッシュ（ブラウザホスト用）
 
@@ -85,14 +84,19 @@ const loader = createExtensionLoader({...hostPorts, cache});
 - 新たな Remote バイト列を取得し保存した場合も、権限承認は毎回別途必要です。コード内から追加取得される依存リソースや外部サービスはこのキャッシュの対象外です。
 - Web/Editor はこのポートを初期化して注入するだけとし、`scratch-gui` と `turbowarp-plus-editor` に別のキャッシュロジックを実装しないでください。
 
+## ソースとビルド
+
+ソースは `src/*.ts` の TypeScript です。`npm run build`（`tsc`）が ES2022 の ESM と型宣言を `dist/` に出力し、`exports`・`main`/`module`・webpack 4 用のルートファイル（`packager.js` など）はすべて `dist/` を指します。`dist/` は Git に含めず、Git 依存としてインストールされるときに `prepare` スクリプトがビルドします。webpack 4 では従来どおり `./webpack4` の Babel 設定が `dist/` を変換します。
+
 ## 検証
 
 ```sh
 npm ci --ignore-scripts
+npm run typecheck
 npm test
 ```
 
-Node.js >=24 の組み込み test runner / Web Crypto を使い、Loader 本体を依存パッケージなしで headless 検証します。ZIP codec の fixture 検証には開発依存の `@turbowarp/jszip` を使います。`test/fixtures/extension.js` はホストに渡すバイト列の fixture で、テスト中に評価しません。実ネットワーク、CORS / CSP、VM の private API、ブラウザー拡張実行の検証とは区別します。
+`npm test` は `dist/` をビルドしてから、パッケージ名経由（`exports` 解決）で公開APIを検証します。テストは型に反する不正入力も渡すため JavaScript のままです。Node.js >=26 の組み込み test runner / Web Crypto を使い、Loader 本体を実行時依存パッケージなしで headless 検証します。ZIP codec の fixture 検証には開発依存の `@turbowarp/jszip` を使います。`test/fixtures/extension.js` はホストに渡すバイト列の fixture で、テスト中に評価しません。実ネットワーク、CORS / CSP、VM の private API、ブラウザー拡張実行の検証とは区別します。
 
 ## 導入と切戻し
 

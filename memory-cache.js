@@ -1,1 +1,1 @@
-export {createMemoryContentCache} from './src/memory-cache.js';
+export {createMemoryContentCache} from './dist/memory-cache.js';

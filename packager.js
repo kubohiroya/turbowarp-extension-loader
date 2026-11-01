@@ -1,1 +1,1 @@
-export * from './src/packager.js';
+export * from './dist/packager.js';
