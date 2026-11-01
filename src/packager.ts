@@ -87,7 +87,8 @@ export async function convertProjectSources(input: unknown, ports: PackagingPort
         const bytes = encoder.encode(record.code);
         if (await digest(bytes) !== record.sha256) fail('CONVERSION_INTEGRITY', 'UTF-8 conversion changed verified source bytes');
         own(artifacts, record.id, new Uint8Array(bytes));
-        if (validated.source.type === 'embedded') {
+        // Embedded and cached both keep a copy in the archive, so both need their entry written.
+        if (validated.source.type !== 'remote') {
             const path = validated.source.path;
             if (outputPaths.has(path)) fail('DUPLICATE_EMBEDDED_PATH', 'Each extension needs a distinct embedded output path');
             outputPaths.add(path);

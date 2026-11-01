@@ -2,9 +2,28 @@
 
 ## Unreleased
 
-Already on `main`, but not in 0.1.0: the `v0.1.0` tag was cut before these merged, and a published
-npm version cannot be replaced, so the archive on npm still carries the Japanese `README.md` and
-these reach the registry in the next release.
+## 0.2.0
+
+A third source form for extensions whose bytes should be reachable both from a canonical published
+location and offline.
+
+- `source` accepts `{type: 'cached', url, path}` beside `embedded` and `remote`. It names both
+  locations at once: `url` stays canonical and a verified copy is retained at `path` inside the
+  project. Resolution reads the retained copy first and falls back to the URL, reporting a
+  `retained-copy-unavailable` diagnostic when the entry is absent. The copy is not a weaker source —
+  the Manifest pins the SHA-256, so it either is exactly the pinned code or the load fails with
+  `DIGEST_MISMATCH`, which is why it may be read before the network. `url` follows the same HTTPS,
+  redirect and final-URL policy as `remote`, `path` the same `extensions/*.js` policy as `embedded`,
+  and the cache port still takes precedence over both locations.
+- `./project-catalog` accepts `distribution: 'cached'`, and `./project-codec` and `./packager`
+  require and write the retained entry for a cached source as they do for an embedded one.
+- This keeps `schemaVersion: 1`. A Manifest that does not use `cached` stays loadable by 0.1.0; one
+  that does needs 0.2.0 or newer, and older versions reject it with `INVALID_SOURCE` rather than
+  loading it in a weaker form.
+
+The rest of this release was already on `main` but not in 0.1.0: the `v0.1.0` tag was cut before
+these merged, and a published npm version cannot be replaced, so the archive on npm still carries
+the Japanese `README.md` and these reach the registry here.
 
 - `README.md` is the English document and the Japanese one is `README.ja.md`, each linking to the
   other. Both state that hosts should pin an exact version, that a 0.x minor may change the

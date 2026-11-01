@@ -1,4 +1,12 @@
-export type ExtensionSource = Readonly<{type: 'embedded'; path: string} | {type: 'remote'; url: string}>;
+/**
+ * Where one extension's bytes live.
+ *
+ * `cached` names both locations at once: the canonical one is `url`, and a verified copy is
+ * retained at `path` inside the project so the extension also resolves offline. The copy is not a
+ * weaker source — the Manifest pins the SHA-256, so a retained copy either is exactly the pinned
+ * code or the load fails, which is why it may be read before the network.
+ */
+export type ExtensionSource = Readonly<{type: 'embedded'; path: string} | {type: 'remote'; url: string} | {type: 'cached'; url: string; path: string}>;
 export type ExecutionMode = 'sandboxed' | 'unsandboxed';
 export interface ExtensionSpec {
     readonly id: string;
@@ -98,6 +106,12 @@ function remoteURL(value: string): string {
     return url.href;
 }
 
+function embeddedPath(value: unknown): string {
+    const path = string(value, 'embedded path', 256);
+    if (!/^extensions\/[a-zA-Z0-9][a-zA-Z0-9._/-]*\.js$/.test(path) || path.split('/').some(part => !part || part === '.' || part === '..')) fail('INVALID_SOURCE', 'Unsafe embedded path');
+    return path;
+}
+
 function sourceOf(source: unknown): ExtensionSource {
     if (!object(source)) fail('INVALID_SOURCE', 'Missing extension source');
     if (source.type === 'remote') {
@@ -106,9 +120,12 @@ function sourceOf(source: unknown): ExtensionSource {
     }
     if (source.type === 'embedded') {
         keys(source, ['type', 'path'], 'source');
-        const path = string(source.path, 'embedded path', 256);
-        if (!/^extensions\/[a-zA-Z0-9][a-zA-Z0-9._/-]*\.js$/.test(path) || path.split('/').some(part => !part || part === '.' || part === '..')) fail('INVALID_SOURCE', 'Unsafe embedded path');
-        return Object.freeze({type: 'embedded', path});
+        return Object.freeze({type: 'embedded', path: embeddedPath(source.path)});
+    }
+    if (source.type === 'cached') {
+        keys(source, ['type', 'url', 'path'], 'source');
+        // The same HTTPS and path policies as the two single-location forms it combines.
+        return Object.freeze({type: 'cached', url: remoteURL(string(source.url, 'URL', 4096)), path: embeddedPath(source.path)});
     }
     fail('INVALID_SOURCE', 'Unsupported source type');
 }
@@ -248,15 +265,23 @@ export function createExtensionLoader(ports: LoaderPorts, options: LoaderOptions
         if (!bytes) {
             // The manifest is frozen, so the narrowed source stays valid inside the port callbacks.
             const source = spec.source;
-            if (source.type === 'embedded') {
+            if (source.type !== 'remote') {
                 if (typeof ports.embeddedReader?.read !== 'function') fail('INVALID_PORT', 'Embedded reader is unavailable', spec.id);
-                bytes = snapshotBytes(await guarded(() => ports.embeddedReader!.read(source.path, {signal, maxBytes: limits.maxBytes}), signal), limits.maxBytes, spec.id);
-            } else {
+                // A cached source may have lost its retained copy; its URL remains the canonical one.
+                try {
+                    bytes = snapshotBytes(await guarded(() => ports.embeddedReader!.read(source.path, {signal, maxBytes: limits.maxBytes}), signal), limits.maxBytes, spec.id);
+                } catch (cause) {
+                    if (source.type === 'embedded' || signal.aborted) throw cause;
+                    report({type: 'retained-copy-unavailable', id: spec.id});
+                }
+            }
+            if (!bytes && source.type !== 'embedded') {
                 if (typeof ports.fetcher?.fetch !== 'function') fail('INVALID_PORT', 'Remote fetch port is unavailable', spec.id);
                 const response = await guarded(() => ports.fetcher!.fetch(source.url, {signal, maxBytes: limits.maxBytes}), signal);
                 if (!response || !Array.isArray(response.redirects) || response.redirects.length || response.finalURL !== source.url) fail('REDIRECT_DENIED', 'Unproven or redirected remote source', spec.id);
                 bytes = snapshotBytes(response.bytes, limits.maxBytes, spec.id);
             }
+            if (!bytes) fail('SOURCE_UNAVAILABLE', 'Extension bytes could not be read', spec.id);
         }
         budget.bytes += bytes.byteLength;
         if (budget.bytes > limits.maxTotalBytes) fail('TOTAL_SIZE_LIMIT', 'Project extension bytes exceed total limit', spec.id);
