@@ -188,7 +188,11 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
                 ...(old?.publisher ? {publisher: old.publisher} : {}),
                 capabilities: old?.capabilities || [], dependencies: choice.dependencies});
         }
-        const manifest = validateManifest({schemaVersion: 1, extensions: [...extensions.values()]}, loaderOptions);
+        // The project's own address survives a change to its extensions. Rebuilding the manifest
+        // without it would file the same work under a new name the next time it was saved, which
+        // is the one thing an address is for.
+        const manifest = validateManifest({schemaVersion: 1, ...(prepared.manifest?.uri === undefined ?
+            {} : {uri: prepared.manifest.uri}), extensions: [...extensions.values()]}, loaderOptions);
         for (const spec of manifest.extensions) if (spec.source.type === 'embedded-file') replacedPaths.delete(spec.source.path);
         for (const path of replacedPaths) delete files[path];
         project.turboWarpPlus = manifest;

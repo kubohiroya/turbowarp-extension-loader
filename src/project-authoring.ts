@@ -108,9 +108,12 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         }
         if (project.extensionURLs !== undefined && !plainObject(project.extensionURLs)) fail('INVALID_PROJECT', 'Project extensionURLs must be an object');
         const previous = prepared.manifest?.extensions || [];
+        // Carried through every rebuild below: an address that changed when an extension was
+        // added would not be an address.
+        const carried = prepared.manifest?.uri === undefined ? {} : {uri: prepared.manifest.uri};
         if (previous.some(spec => spec.id === draft.id) || (project.extensions || []).includes(draft.id) ||
             Object.hasOwn(project.extensionURLs || {}, draft.id)) fail('DUPLICATE_EXTENSION', 'This extension ID already belongs to the project', draft.id);
-        validateManifest({schemaVersion: 1, extensions: [...previous, draft]}, loaderOptions);
+        validateManifest({schemaVersion: 1, ...carried, extensions: [...previous, draft]}, loaderOptions);
         if (draft.source.type === 'embedded-file' && Object.hasOwn(files, draft.source.path)) {
             fail('SOURCE_PATH_COLLISION', 'The embedded path already exists in this project', draft.id);
         }
@@ -136,7 +139,7 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         }
         const verified = new Uint8Array(bytes);
         const sha256 = await wait(() => digest(verified));
-        const manifest = validateManifest({schemaVersion: 1, extensions: [...previous, {...draft, sha256}]}, loaderOptions);
+        const manifest = validateManifest({schemaVersion: 1, ...carried, extensions: [...previous, {...draft, sha256}]}, loaderOptions);
         const spec = manifest.extensions.find(item => item.id === draft.id)!;
         project.turboWarpPlus = manifest;
         project.extensions = [...(project.extensions || []), spec.id];
