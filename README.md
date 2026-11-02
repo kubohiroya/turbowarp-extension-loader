@@ -161,11 +161,14 @@ URL the bytes came from:
 That URL is what makes falling back possible when a retained copy is missing. Without it, a
 missing copy is the end of it.
 
-A manifest written before 0.4.0 spells that same thing `cached`. It is still read, as exactly
-the embedded source it always was, so projects already saved keep opening. Nothing writes it any
-more, and `prepareCatalogExtensionChanges` no longer takes it: `distribution` is `embedded` or
-`remote`, because where bytes are cached **in the browser** is the opener's decision and goes to
-`load()` instead.
+A manifest written before 0.4.0 spells that same thing `cached`. **It is refused**, with a
+message saying what it is now. This family does not promise to read what older versions wrote,
+and translating it silently would hide the change from whoever has to make it. A project saved
+by an older version has to be written again.
+
+`prepareCatalogExtensionChanges` no longer takes `cached` either: `distribution` is `embedded`
+or `remote`, because where bytes are cached **in the browser** is the opener's decision and goes
+to `load()` instead.
 
 ## Source and build
 

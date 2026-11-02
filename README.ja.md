@@ -160,10 +160,13 @@ await loader.load(manifest, {
 
 この URL があるから、控えが欠けたときに取得へ落ちられます。無ければ、欠けた時点で終わりです。
 
-0.4.0 より前に書かれた Manifest は、同じものを `cached` と綴ります。**いまも読めます。**
-もともとそうであった embedded の source として読むので、保存済みの作品は開き続けます。書き出し
-はしません。`prepareCatalogExtensionChanges` も受け取らなくなりました。`distribution` は
-`embedded` か `remote` です。**ブラウザー**のどこに控えるかは開く人の決定で、`load()` へ渡します。
+0.4.0 より前に書かれた Manifest は、同じものを `cached` と綴ります。**拒否します。** いまは何に
+あたるかをメッセージで示します。このファミリーは、古い版が書いたものを読み続けることを約束して
+いません。黙って読み替えると、直すべき人から変更が見えなくなります。古い版で保存した作品は、
+保存し直す必要があります。
+
+`prepareCatalogExtensionChanges` も `cached` を受け取りません。`distribution` は `embedded` か
+`remote` です。**ブラウザー**のどこに控えるかは開く人の決定で、`load()` へ渡します。
 
 ## ソースとビルド
 

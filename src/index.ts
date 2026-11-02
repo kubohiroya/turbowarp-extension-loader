@@ -16,8 +16,9 @@ import {DEFAULT_LOADER_LIMITS} from './limits.js';
  * falling back possible when a retained copy is missing — and is the only difference between the
  * two forms this used to spell as separate types.
  *
- * A manifest written before 0.4.0 may say `cached` for an embedded source that records its URL.
- * That spelling is still read, because projects already carry it; nothing writes it any more.
+ * A manifest written before 0.4.0 spells that same embedded source `cached`. It is refused, not
+ * translated: this family does not promise to read what older versions wrote, and a refusal
+ * names the problem where a silent translation would hide it.
  */
 export type ExtensionSource = Readonly<{type: 'embedded'; path: string; url?: string} | {type: 'remote'; url: string}>;
 export type ExecutionMode = 'sandboxed' | 'unsandboxed';
@@ -167,19 +168,15 @@ function sourceOf(source: unknown): ExtensionSource {
         keys(source, ['type', 'url'], 'source');
         return Object.freeze({type: 'remote', url: remoteURL(string(source.url, 'URL', 4096))});
     }
-    // `cached` is how a manifest written before 0.4.0 spells an embedded source that records its
-    // URL. It is read as exactly that; the same HTTPS and path policies apply either way.
-    if (source.type === 'embedded' || source.type === 'cached') {
+    if (source.type === 'embedded') {
         keys(source, ['type', 'path', 'url'], 'source');
         const path = embeddedPath(source.path);
-        // The old spelling always carried a URL, so a missing one is a malformed field there,
-        // reported by the shared validator exactly as it always was.
-        if (source.type === 'cached') {
-            return Object.freeze({type: 'embedded', path, url: remoteURL(string(source.url, 'URL', 4096))});
-        }
         if (source.url === undefined) return Object.freeze({type: 'embedded', path});
         return Object.freeze({type: 'embedded', path, url: remoteURL(string(source.url, 'URL', 4096))});
     }
+    // Name the one spelling that used to mean an embedded source, so a project written by an
+    // older version fails with something a reader can act on rather than "unsupported".
+    if (source.type === 'cached') fail('INVALID_SOURCE', 'A cached source is now an embedded source with a url');
     fail('INVALID_SOURCE', 'Unsupported source type');
 }
 
