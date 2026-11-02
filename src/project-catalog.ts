@@ -11,9 +11,9 @@ export interface CatalogExtensionRequest {
     /**
      * Where the project keeps it: carrying the bytes, or only a reference.
      *
-     * There is deliberately no third value. What a manifest written before 0.4.0 spelled
-     * `cached` was an embedded source that also recorded its URL, not a browser cache; where
-     * bytes are cached in the browser is the opener's decision, passed to `load()` instead.
+     * Either way the manifest records where the bytes came from, so a project that carries them
+     * can still recover if its retained copy is lost. There is deliberately no third value:
+     * where bytes are cached in the browser is the opener's decision, passed to `load()`.
      */
     distribution: 'embedded' | 'remote';
     execution: ExecutionMode;
@@ -141,10 +141,14 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
             const sha256 = await wait(() => digest(bytes));
             if (old && old.sha256 !== sha256) fail('CONVERSION_INTEGRITY', 'Source conversion changed bytes', choice.id);
             const retainedPath = `extensions/${choice.id}-${sha256}.js`;
+            // Embedding keeps where the bytes came from. Dropping it would throw away the only
+            // thing that lets a project recover when its retained copy is lost.
             const source: ExtensionSource = choice.distribution === 'embedded' ?
-                {type: 'embedded', path: retainedPath} : choice.source;
-            // A reference stays canonical, so the URL must still serve exactly the pinned bytes.
-            if (source.type !== 'embedded') {
+                {type: 'embedded', path: retainedPath, url: (choice.source as {url: string}).url} :
+                choice.source;
+            // A recorded URL is a promise about what it serves, so it must still serve exactly
+            // the pinned bytes — whether it is the only place they live or sits beside a copy.
+            if (source.url !== undefined) {
                 const remoteBytes = old ? await fetchBytes(source.url) : bytes;
                 if (await wait(() => digest(remoteBytes)) !== sha256) {
                     fail('DIGEST_MISMATCH', 'Remote source does not serve the currently pinned bytes', choice.id);

@@ -165,8 +165,10 @@ await loader.load(manifest, {
 いません。黙って読み替えると、直すべき人から変更が見えなくなります。古い版で保存した作品は、
 保存し直す必要があります。
 
-`prepareCatalogExtensionChanges` も `cached` を受け取りません。`distribution` は `embedded` か
-`remote` です。**ブラウザー**のどこに控えるかは開く人の決定で、`load()` へ渡します。
+`prepareCatalogExtensionChanges` の `distribution` は `embedded` か `remote` です。**ブラウザー**の
+どこに控えるかは開く人の決定で、`load()` へ渡します。どちらでも Manifest は取得元を記録します。
+embedded は控えの横に URL を残すので、控えを失っても回復できます。URL は、どちらの形で保存されて
+いても、固定したバイト列を返すか照合します。
 
 ## ソースとビルド
 

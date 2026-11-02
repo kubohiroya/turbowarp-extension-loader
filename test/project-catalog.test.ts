@@ -272,3 +272,22 @@ test('unproven fetch responses, oversized bodies and invalid UTF-8 never reach t
         assert.deepEqual(ports.approvals, []);
     }
 });
+
+test('embedding keeps where the bytes came from, so a lost copy can still be recovered', async () => {
+    const result = await prepareCatalogExtensionChanges(await archive(),
+        [request('sample', {distribution: 'embedded'})], host(), {zip: Zip});
+    const {json} = await decode(result);
+    const [spec] = json.turboWarpPlus.extensions as {source: Record<string, unknown>}[];
+    assert.deepEqual(spec!.source, {
+        type: 'embedded', path: `extensions/sample-${hash(content('sample'))}.js`, url: url('sample')
+    });
+});
+
+test('a recorded URL is checked against the pinned bytes even when a copy is retained', async () => {
+    const ports = host({sources: new Map([[url('sample'), encoder.encode('different code')]])});
+    const initial = await prepareCatalogExtensionChanges(await archive(),
+        [request('sample', {distribution: 'embedded'})], host(), {zip: Zip});
+    // Re-embedding re-reads the URL, which must still serve what the manifest pinned.
+    await assert.rejects(prepareCatalogExtensionChanges(initial.projectBytes,
+        [request('sample', {distribution: 'embedded'})], ports, {zip: Zip}), {code: 'DIGEST_MISMATCH'});
+});

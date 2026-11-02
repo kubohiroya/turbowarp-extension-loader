@@ -166,9 +166,11 @@ message saying what it is now. This family does not promise to read what older v
 and translating it silently would hide the change from whoever has to make it. A project saved
 by an older version has to be written again.
 
-`prepareCatalogExtensionChanges` no longer takes `cached` either: `distribution` is `embedded`
-or `remote`, because where bytes are cached **in the browser** is the opener's decision and goes
-to `load()` instead.
+`prepareCatalogExtensionChanges` takes `distribution: 'embedded' | 'remote'`, because where
+bytes are cached **in the browser** is the opener's decision and goes to `load()` instead.
+Either way the manifest records where the bytes came from: embedding keeps the URL beside the
+retained copy, so a project can still recover if that copy is lost, and the URL is checked
+against the pinned bytes whichever form it is stored in.
 
 ## Source and build
 
