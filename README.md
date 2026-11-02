@@ -239,11 +239,12 @@ that needs a default.
 is given when its author has not chosen one:
 
 ```js
-const uri = defaultProjectURI(location.origin + location.pathname, createProjectUUID());
+const uri = defaultProjectURI(location.origin, createProjectUUID());
 ```
 
-The origin is the editor's own, never a host it does not serve from, because this address travels
-inside the SB3 when the work is handed on. The identifier is a UUID version 7, so it sorts by when
+The origin is that of the domain the editor was opened at, with no path (passing the path of
+`editor.html` would put the address under it). It is never a host the editor does not serve from,
+because this address travels inside the SB3 when the work is handed on. The identifier is a UUID version 7, so it sorts by when
 the project was first saved, and the two directory levels are taken from its **end** — a version 7
 UUID begins with the top of a millisecond clock, which barely moves, so sharding on its first
 characters would put every project ever created in one directory.
