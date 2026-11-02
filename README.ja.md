@@ -127,6 +127,36 @@ const loader = createExtensionLoader({...hostPorts, cache});
 - 新たな Remote バイト列を取得し保存した場合も、権限承認は毎回別途必要です。コード内から追加取得される依存リソースや外部サービスはこのキャッシュの対象外です。
 - Web/Editor はこのポートを初期化して注入するだけとし、`scratch-gui` と `turbowarp-plus-editor` に別のキャッシュロジックを実装しないでください。
 
+### そのバイト列が誰のものか、どう手放すか
+
+キャッシュは内容アドレス方式です。キーが digest なので、2つの作品が同じ拡張を使っていても実体は
+1つで、持っていないバイト列のキーに書き込むことはできません。だから共有が安全で、同時に
+**エントリは誰のものでもありません**。もう1つのストアに「claim」を記録することで、作品ごとの
+取り分を一覧し、手放せるようにしています。バイト列を二重に持つことはありません。
+
+```js
+const cache = createIndexedDBContentCache({appURI: manifest.uri, sharedDigests: catalogDigests});
+
+await cache.listBuckets();                 // 何かを持っている作品すべてと、その量
+await cache.listBucket(manifest.uri);      // この作品が持っているもの
+await cache.listBucket(SHARED_BUCKET);     // どの作品のものでもないもの
+await cache.deleteBucket(manifest.uri);    // 手放す。他が参照していないバイト列も回収する
+```
+
+カタログの拡張は版が固定で多くの作品が共有するので、`sharedDigests` でどれか1つの作品の下に
+入らないようにします。そうしないと、最初に取得した作品が、他の全作品が使い回す容量の責任を
+負っているように見え、その作品を手放すと他がまだ使いたいバイト列まで落ちます。この集合は書き込み
+ごとに読むので、カタログの読み込みに合わせて埋めていけます。どの作品を開いているか言えないホスト
+は、すべてを shared に入れます。名前を推測するのは、無いと認めるより悪いからです。
+
+バケットを手放すと claim が落ち、**他が参照していない**バイト列だけが回収されます。2回参照されて
+いる1つの実体は残ります。もう一方の作品は失うことを求めていません。容量超過で追い出すときは
+claim も一緒に落ちるので、バケットが「もう無いもの」を並べることはありません。
+
+誰が入れたかの記録は無いので、作品を手放すとは「**その作品が名指す digest** を手放す」ことです。
+別の作品が使い回したはずのバイト列を落とす可能性があります。代償は取得1回だけですが、人に見せる
+一覧でそれ以上を約束しないようにしたいです。
+
 ## 機能拡張のバイト列がどこから来るか
 
 このファミリーは、機能拡張に限らず何を保持するにも4つの形式で整理しています。どの形式かは
@@ -281,7 +311,7 @@ const candidate = await prepareExtensionAddition(currentSB3, {
 
 ## 一覧からの一括設定API
 
-`./project-catalog` の `prepareCatalogExtensionChanges(currentSB3, requests, ports, options)` は、カタログの選択をまとめてSB3候補へ反映します。requestは `{id, url, distribution: 'embedded' | 'remote' | 'cached', execution: 'sandboxed' | 'unsandboxed', dependencies?, version?}` です。JS取得・SHA-256計算・依存順・全件検証・ホスト承認を共通Loaderで行い、全件承認後に `{projectBytes, manifest}` を返します。実VMには触りません。
+`./project-catalog` の `prepareCatalogExtensionChanges(currentSB3, requests, ports, options)` は、カタログの選択をまとめてSB3候補へ反映します。requestは `{id, url, distribution: 'remote-non-cacheable' | 'remote-cacheable' | 'embedded-file' | 'embedded-data', execution: 'sandboxed' | 'unsandboxed', dependencies?, version?}` です。JS取得・SHA-256計算・依存順・全件検証・ホスト承認を共通Loaderで行い、全件承認後に `{projectBytes, manifest}` を返します。実VMには触りません。
 
 既存Plus拡張の配布方式・実行モードを変える場合は、検証済みコードとSHA-256・発行者・バージョン・lockを保持します。Remote出力先が現在のコードを返さない場合、更新として勝手に追従せず拒否します。`readProjectAuthoringState(input, options)` は検証済みManifestを返し、UIの状態復元に使えます。これらの作品情報は実行許可ではありません。
 
