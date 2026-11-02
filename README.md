@@ -179,6 +179,45 @@ rather than discarding what is already known, and the URL is checked against the
 whichever form it is stored in. A url is optional for the general case, where bytes nobody
 fetched — a costume, a sound, an extension written in the editor — have no address to record.
 
+## What identifies one project
+
+A manifest may carry a `uri`: the address the project can be downloaded from, which is also what
+identifies it.
+
+```json
+{"schemaVersion": 1, "uri": "https://example.test/editor/turbowarp-plus-projects/66/66aa/0193f0a1-2b3c-7d4e-8f01-2233445566aa.sb3", "extensions": []}
+```
+
+One work, one URI, across every edit. That is why it is an address and not a fingerprint: a
+fingerprint changes on every save, so a browser cache and a record of what the opener chose would
+file one work under a new name each time it was touched. An address does not change when the bytes
+do.
+
+`createProjectUUID` and `defaultProjectURI` in `./project-authoring` build the address a project
+is given when its author has not chosen one:
+
+```js
+const uri = defaultProjectURI(location.origin + location.pathname, createProjectUUID());
+```
+
+The origin is the editor's own, never a host it does not serve from, because this address travels
+inside the SB3 when the work is handed on. The identifier is a UUID version 7, so it sorts by when
+the project was first saved, and the two directory levels are taken from its **end** — a version 7
+UUID begins with the top of a millisecond clock, which barely moves, so sharding on its first
+characters would put every project ever created in one directory.
+
+The address is deliberately opaque. A readable one would be derived from the title and would
+change when the title changed, filing one work under a second name; readability belongs to the
+deliberate act of publishing, where the author names the address themselves. A list meant for a
+person shows the project's title beside this.
+
+Nothing is served from the address until the author publishes there, and that is expected. **A URI
+that does not resolve says nothing**: a work saved but never published and a published work whose
+address rotted look exactly alike. Never decide anything by whether it resolves, least of all what
+to delete. The URI is also the project's own claim and is not verified — a work can name any
+address, including another's. What that can spoil is bookkeeping and nothing else, because the
+cache is keyed by digest and every hit is verified against it.
+
 ## Source and build
 
 The source and the tests are TypeScript, in `src/*.ts` and `test/*.test.ts`, laid out the same way as the other `@kubohiroya/turbowarp-*` packages: `tsconfig.json` typechecks without emitting, `tsconfig.build.json` extends it to emit, and `test/tsconfig.json` extends it for the tests. `npm run build` (`tsc -p tsconfig.build.json`) emits ES2022 ESM and type declarations to `dist/`, and `exports`, `main`/`module` and the root files used by webpack 4 (`packager.js` and the rest) all point at `dist/`. `dist/` is not committed to Git; the `prepare` script builds it when the package is installed as a Git dependency, and the npm package ships the built `dist/`. Under webpack 4, the Babel configuration in `./webpack4` transpiles `dist/` as before.
