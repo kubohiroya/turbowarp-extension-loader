@@ -180,7 +180,7 @@ test('default limits read a several-MiB extension from every source and stop pas
     // A bundled story runtime is about 7 MiB; it must load in a Plus form as it does from a Data URL.
     const large = padded(7.5 * 1024 * 1024);
     for (const source of [{type: 'embedded', path: 'extensions/fixture.js'}, {type: 'remote', url: 'https://example.org/fixture.js'},
-        {type: 'cached', url: 'https://example.org/fixture.js', path: 'extensions/fixture.js'}]) {
+        {type: 'embedded', url: 'https://example.org/fixture.js', path: 'extensions/fixture.js'}]) {
         const {loader, calls} = host({embeddedReader: {async read() { return large; }},
             fetcher: {async fetch(url: string) { return {bytes: large, finalURL: url, redirects: []}; }}});
         assert.deepEqual((await loader.load(manifest({...spec('fixture', source), sha256: hash(large)}))).ids, ['fixture']);

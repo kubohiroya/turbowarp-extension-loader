@@ -121,6 +121,59 @@ const loader = createExtensionLoader({...hostPorts, cache});
 - Fetching and storing new Remote bytes still requires a separate authorization every time. Dependent resources and external services fetched from inside the code are outside the scope of this cache.
 - The Web and Editor hosts should only initialize and inject this port, and should not implement separate cache logic in `scratch-gui` or `turbowarp-plus-editor`.
 
+## Where an extension's bytes come from
+
+The family settled on three ways to hold anything, extensions included.
+
+| Way | Browser (IndexedDB) | Project (SB3) |
+| --- | --- | --- |
+| `remote` | nothing kept | reference only |
+| `cached` | verified bytes kept and reused | reference only |
+| `embedded` | not used | the project carries the bytes |
+
+`embedded` has two forms: **`embedded-file`**, a file inside the archive, and **`embedded-data`**,
+a `data:` value inside the project document.
+
+Only `remote` and `cached` are a choice at load time. `embedded` is the author's decision and is
+already in the manifest, so there is nothing left to ask. The other two are the opener's decision
+about their own browser, so they travel with neither the project nor the manifest:
+
+```js
+await loader.load(manifest, {
+    // Anything absent is cached, which is what every caller got before this option existed.
+    caching: new Map([['someextension', 'remote']])
+});
+```
+
+`remote` holds in both directions: the cache is not read for that extension and not written
+either, so a person who asked to leave nothing behind leaves nothing behind.
+
+### How a project says where it keeps an extension
+
+`source.type` has two values, matching the table: `embedded` for a project that carries the
+bytes, `remote` for one that carries only a reference. An embedded source may also record the
+URL the bytes came from:
+
+```json
+{"type": "embedded", "path": "extensions/thing-<sha256>.js", "url": "https://example.test/thing.js"}
+```
+
+That URL is what makes falling back possible when a retained copy is missing. Without it, a
+missing copy is the end of it.
+
+A manifest written before 0.4.0 spells that same thing `cached`. **It is refused**, with a
+message saying what it is now. This family does not promise to read what older versions wrote,
+and translating it silently would hide the change from whoever has to make it. A project saved
+by an older version has to be written again.
+
+`prepareCatalogExtensionChanges` takes `distribution: 'embedded' | 'remote'`, because where
+bytes are cached **in the browser** is the opener's decision and goes to `load()` instead.
+Either way the manifest records where the bytes came from: a catalog extension was fetched from
+an address, so embedding keeps that address beside the retained copy rather than discarding what
+is already known, and the URL is checked against the pinned bytes whichever form it is stored in.
+A url is optional on an embedded source for the general case, where bytes nobody fetched — a
+costume, a sound, an extension written in the editor — have no address to record.
+
 ## Source and build
 
 The source and the tests are TypeScript, in `src/*.ts` and `test/*.test.ts`, laid out the same way as the other `@kubohiroya/turbowarp-*` packages: `tsconfig.json` typechecks without emitting, `tsconfig.build.json` extends it to emit, and `test/tsconfig.json` extends it for the tests. `npm run build` (`tsc -p tsconfig.build.json`) emits ES2022 ESM and type declarations to `dist/`, and `exports`, `main`/`module` and the root files used by webpack 4 (`packager.js` and the rest) all point at `dist/`. `dist/` is not committed to Git; the `prepare` script builds it when the package is installed as a Git dependency, and the npm package ships the built `dist/`. Under webpack 4, the Babel configuration in `./webpack4` transpiles `dist/` as before.

@@ -8,7 +8,14 @@ import {DEFAULT_LOADER_LIMITS, DEFAULT_TOTAL_BYTES} from './limits.js';
 export interface CatalogExtensionRequest {
     id: string;
     url: string;
-    distribution: 'embedded' | 'remote' | 'cached';
+    /**
+     * Where the project keeps it: carrying the bytes, or only a reference.
+     *
+     * Either way the manifest records where the bytes came from, so a project that carries them
+     * can still recover if its retained copy is lost. There is deliberately no third value:
+     * where bytes are cached in the browser is the opener's decision, passed to `load()`.
+     */
+    distribution: 'embedded' | 'remote';
     execution: ExecutionMode;
     dependencies?: string[];
     version?: string;
@@ -77,7 +84,7 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
     try {
         const seen = new Set<string>();
         const choices = requests.map(request => {
-            if (!request || !['remote', 'embedded', 'cached'].includes(request.distribution) || seen.has(request.id)) {
+            if (!request || !['remote', 'embedded'].includes(request.distribution) || seen.has(request.id)) {
                 fail('INVALID_ADDITION', 'Invalid or duplicate catalog selection', request?.id);
             }
             seen.add(request.id);
@@ -134,17 +141,22 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
             const sha256 = await wait(() => digest(bytes));
             if (old && old.sha256 !== sha256) fail('CONVERSION_INTEGRITY', 'Source conversion changed bytes', choice.id);
             const retainedPath = `extensions/${choice.id}-${sha256}.js`;
+            // A catalog extension was fetched from an address, so embedding keeps that address
+            // beside the copy rather than discarding what is already known. Bytes nobody fetched —
+            // a costume, a sound, an extension written here — have no address to record, which is
+            // why a url is optional on an embedded source.
             const source: ExtensionSource = choice.distribution === 'embedded' ?
-                {type: 'embedded', path: retainedPath} : choice.distribution === 'cached' ?
-                {type: 'cached', url: (choice.source as {url: string}).url, path: retainedPath} : choice.source;
-            // A URL stays canonical for remote and cached, so it must still serve the pinned bytes.
-            if (source.type !== 'embedded') {
+                {type: 'embedded', path: retainedPath, url: (choice.source as {url: string}).url} :
+                choice.source;
+            // A recorded URL is a promise about what it serves, so it must still serve exactly
+            // the pinned bytes — whether it is the only place they live or sits beside a copy.
+            if (source.url !== undefined) {
                 const remoteBytes = old ? await fetchBytes(source.url) : bytes;
                 if (await wait(() => digest(remoteBytes)) !== sha256) {
                     fail('DIGEST_MISMATCH', 'Remote source does not serve the currently pinned bytes', choice.id);
                 }
             }
-            // Embedded and cached both retain a copy in the project.
+            // An embedded choice retains a copy in the project.
             if (source.type !== 'remote') {
                 if (Object.hasOwn(files, source.path) && await wait(() => digest(files[source.path])) !== sha256) {
                     fail('SOURCE_PATH_COLLISION', 'The embedded path belongs to different content', choice.id);

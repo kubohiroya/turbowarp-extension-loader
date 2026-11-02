@@ -8,7 +8,19 @@ import {DEFAULT_LOADER_LIMITS} from './limits.js';
  * weaker source — the Manifest pins the SHA-256, so a retained copy either is exactly the pinned
  * code or the load fails, which is why it may be read before the network.
  */
-export type ExtensionSource = Readonly<{type: 'embedded'; path: string} | {type: 'remote'; url: string} | {type: 'cached'; url: string; path: string}>;
+/**
+ * Where a project keeps an extension.
+ *
+ * `embedded` is the project carrying the bytes; `remote` is the project carrying only a
+ * reference. An embedded source may also record the URL the bytes came from, which is what makes
+ * falling back possible when a retained copy is missing — and is the only difference between the
+ * two forms this used to spell as separate types.
+ *
+ * A manifest written before 0.4.0 spells that same embedded source `cached`. It is refused, not
+ * translated: this family does not promise to read what older versions wrote, and a refusal
+ * names the problem where a silent translation would hide it.
+ */
+export type ExtensionSource = Readonly<{type: 'embedded'; path: string; url?: string} | {type: 'remote'; url: string}>;
 export type ExecutionMode = 'sandboxed' | 'unsandboxed';
 export interface ExtensionSpec {
     readonly id: string;
@@ -31,7 +43,34 @@ export interface AuthorizationDecision {readonly allowed: boolean; readonly scop
 export interface AuthorizedCode extends ResolvedCode {
     readonly authorization: Readonly<{allowed: true; scope: 'digest'; sha256: string}>;
 }
-export interface OperationOptions {signal?: AbortSignal}
+/**
+ * Where one extension's bytes come from while the project runs.
+ *
+ * The family settled on three ways to hold anything, extensions included. `remote` fetches every
+ * time: nothing is kept in the browser and nothing is kept in the project. `cached` keeps
+ * verified bytes in the browser and reuses them, so opening again costs no network while the
+ * project still holds only a reference. `embedded` is the project carrying the bytes itself, in
+ * either of its two forms — `embedded-file`, a file inside the archive, and `embedded-data`, a
+ * `data:` value inside the project document.
+ *
+ * Only the first two are a choice here. `embedded` is the author's decision and is already in
+ * the manifest, so there is nothing to ask at load time. These two are the opener's decision,
+ * about this browser, so they travel with neither the project nor the manifest and are passed in
+ * for each operation.
+ *
+ * Note that `source.type` has a value also spelled `cached`, for a project that carries bytes
+ * and records where they came from. By the vocabulary above, a project that carries bytes is
+ * `embedded`, so that name is the one out of step; see the README.
+ */
+export type CachePolicy = 'cached' | 'remote';
+export interface OperationOptions {
+    signal?: AbortSignal;
+    /**
+     * Per extension ID, where its bytes come from. Anything absent is `cached`, which is what
+     * every caller got before this existed.
+     */
+    caching?: ReadonlyMap<string, CachePolicy>;
+}
 export interface ReadOptions {signal: AbortSignal; maxBytes: number}
 export interface FetchResult {bytes: Uint8Array; finalURL: string; redirects: readonly string[]}
 export interface FetchPort {fetch(url: string, options: ReadOptions): Promise<FetchResult>}
@@ -130,14 +169,14 @@ function sourceOf(source: unknown): ExtensionSource {
         return Object.freeze({type: 'remote', url: remoteURL(string(source.url, 'URL', 4096))});
     }
     if (source.type === 'embedded') {
-        keys(source, ['type', 'path'], 'source');
-        return Object.freeze({type: 'embedded', path: embeddedPath(source.path)});
+        keys(source, ['type', 'path', 'url'], 'source');
+        const path = embeddedPath(source.path);
+        if (source.url === undefined) return Object.freeze({type: 'embedded', path});
+        return Object.freeze({type: 'embedded', path, url: remoteURL(string(source.url, 'URL', 4096))});
     }
-    if (source.type === 'cached') {
-        keys(source, ['type', 'url', 'path'], 'source');
-        // The same HTTPS and path policies as the two single-location forms it combines.
-        return Object.freeze({type: 'cached', url: remoteURL(string(source.url, 'URL', 4096)), path: embeddedPath(source.path)});
-    }
+    // Name the one spelling that used to mean an embedded source, so a project written by an
+    // older version fails with something a reader can act on rather than "unsupported".
+    if (source.type === 'cached') fail('INVALID_SOURCE', 'A cached source is now an embedded source with a url');
     fail('INVALID_SOURCE', 'Unsupported source type');
 }
 
@@ -354,10 +393,13 @@ export function createExtensionLoader(ports: LoaderPorts, options: LoaderOptions
     let loaded: string[] = [];
     const report = (event: DiagnosticEvent) => { try { ports.diagnostics?.(Object.freeze({...event})); } catch { /* Diagnostics must not alter authorization. */ } };
 
-    async function resolve(spec: ExtensionSpec, signal: AbortSignal, budget: {bytes: number}): Promise<ResolvedCode> {
+    async function resolve(spec: ExtensionSpec, signal: AbortSignal, budget: {bytes: number}, caching?: ReadonlyMap<string, CachePolicy>): Promise<ResolvedCode> {
         let bytes: Uint8Array<ArrayBuffer> | undefined;
         let cached = false;
-        if (ports.cache) {
+        // Remote is the person's decision to leave nothing behind, so it holds in both
+        // directions: the cache is not read for this extension, and not written either.
+        const mayCache = caching?.get(spec.id) !== 'remote';
+        if (mayCache && ports.cache) {
             const entry = await guarded(() => ports.cache!.get(spec.sha256, {signal}), signal);
             if (entry !== undefined && entry !== null) {
                 const candidate = snapshotBytes(entry, limits.maxBytes, spec.id);
@@ -369,20 +411,22 @@ export function createExtensionLoader(ports: LoaderPorts, options: LoaderOptions
         if (!bytes) {
             // The manifest is frozen, so the narrowed source stays valid inside the port callbacks.
             const source = spec.source;
-            if (source.type !== 'remote') {
+            if (source.type === 'embedded') {
                 if (typeof ports.embeddedReader?.read !== 'function') fail('INVALID_PORT', 'Embedded reader is unavailable', spec.id);
-                // A cached source may have lost its retained copy; its URL remains the canonical one.
                 try {
                     bytes = snapshotBytes(await guarded(() => ports.embeddedReader!.read(source.path, {signal, maxBytes: limits.maxBytes}), signal), limits.maxBytes, spec.id);
                 } catch (cause) {
-                    if (source.type === 'embedded' || signal.aborted) throw cause;
+                    // Falling back is only possible where the project recorded where the bytes
+                    // came from; without that, a missing retained copy is the end of it.
+                    if (source.url === undefined || signal.aborted) throw cause;
                     report({type: 'retained-copy-unavailable', id: spec.id});
                 }
             }
-            if (!bytes && source.type !== 'embedded') {
+            const url = source.url;
+            if (!bytes && url !== undefined) {
                 if (typeof ports.fetcher?.fetch !== 'function') fail('INVALID_PORT', 'Remote fetch port is unavailable', spec.id);
-                const response = await guarded(() => ports.fetcher!.fetch(source.url, {signal, maxBytes: limits.maxBytes}), signal);
-                if (!response || !Array.isArray(response.redirects) || response.redirects.length || response.finalURL !== source.url) fail('REDIRECT_DENIED', 'Unproven or redirected remote source', spec.id);
+                const response = await guarded(() => ports.fetcher!.fetch(url, {signal, maxBytes: limits.maxBytes}), signal);
+                if (!response || !Array.isArray(response.redirects) || response.redirects.length || response.finalURL !== url) fail('REDIRECT_DENIED', 'Unproven or redirected remote source', spec.id);
                 bytes = snapshotBytes(response.bytes, limits.maxBytes, spec.id);
             }
             if (!bytes) fail('SOURCE_UNAVAILABLE', 'Extension bytes could not be read', spec.id);
@@ -394,13 +438,13 @@ export function createExtensionLoader(ports: LoaderPorts, options: LoaderOptions
         let code: string;
         try { code = new TextDecoder('utf-8', {fatal: true, ignoreBOM: true}).decode(bytes); }
         catch (cause) { throw new LoaderError('INVALID_ENCODING', 'Extension must contain valid UTF-8', spec.id, cause); }
-        if (!cached && ports.cache) await guarded(() => ports.cache!.put(spec.sha256, new Uint8Array(bytes), {signal}), signal);
+        if (!cached && mayCache && ports.cache) await guarded(() => ports.cache!.put(spec.sha256, new Uint8Array(bytes), {signal}), signal);
         const result: ResolvedCode = Object.freeze({...spec, code, byteLength: bytes.byteLength, actualSHA256: actual, cached});
         report({type: 'verified', id: spec.id, sha256: actual, cached});
         return result;
     }
 
-    async function load(input: unknown, {signal: externalSignal}: OperationOptions = {}): Promise<LoadResult> {
+    async function load(input: unknown, {signal: externalSignal, caching}: OperationOptions = {}): Promise<LoadResult> {
         if (state !== 'idle') fail('BUSY', 'Unload the previous project before another load');
         const manifest = validateManifest(input, limits);
         const controller = new AbortController();
@@ -415,7 +459,7 @@ export function createExtensionLoader(ports: LoaderPorts, options: LoaderOptions
         try {
             const budget = {bytes: 0};
             for (const spec of manifest.extensions) {
-                const code = await resolve(spec, signal, budget);
+                const code = await resolve(spec, signal, budget, caching);
                 const decision = await guarded(() => ports.trustProvider.authorize(code, {signal}), signal);
                 if (decision?.allowed !== true || decision.scope !== 'digest' || decision.sha256 !== code.sha256) fail('TRUST_DENIED', 'Host did not approve this exact extension digest', spec.id);
                 const approved: AuthorizedCode = Object.freeze({...code, authorization: Object.freeze({allowed: true, scope: 'digest', sha256: code.sha256})});

@@ -122,6 +122,56 @@ const loader = createExtensionLoader({...hostPorts, cache});
 - 新たな Remote バイト列を取得し保存した場合も、権限承認は毎回別途必要です。コード内から追加取得される依存リソースや外部サービスはこのキャッシュの対象外です。
 - Web/Editor はこのポートを初期化して注入するだけとし、`scratch-gui` と `turbowarp-plus-editor` に別のキャッシュロジックを実装しないでください。
 
+## 機能拡張のバイト列がどこから来るか
+
+このファミリーは、機能拡張に限らず何を保持するにも3つの方式で整理しています。
+
+| 方式 | ブラウザー（IndexedDB） | 作品（SB3） |
+| --- | --- | --- |
+| `remote` | 残さない | 参照だけ |
+| `cached` | 検証したバイト列を残して使い回す | 参照だけ |
+| `embedded` | 使わない | 作品が中身を持つ |
+
+`embedded` には2通りあります。**`embedded-file`**（アーカイブ内に見えるファイル）と、
+**`embedded-data`**（作品の文書に `data:` で値を埋め込む形）です。
+
+読み込み時に選べるのは `remote` と `cached` だけです。`embedded` は作者の決定で、既に
+Manifest に入っているので尋ねることがありません。残り2つは開く人が自分のブラウザーについて
+決めることなので、作品にも Manifest にも載せず、操作ごとに渡します。
+
+```js
+await loader.load(manifest, {
+    // 指定の無いものは cached。この選択肢が無かった頃と同じ挙動になります。
+    caching: new Map([['someextension', 'remote']])
+});
+```
+
+`remote` は両方向に効きます。その拡張についてキャッシュを読まず、書き込みもしません。
+何も残したくないと言った人には、何も残りません。
+
+### 作品が保持の仕方をどう書くか
+
+`source.type` は表のとおり2値です。作品が中身を持つ `embedded` と、参照だけを持つ `remote`
+です。`embedded` は取得元 URL も記録できます。
+
+```json
+{"type": "embedded", "path": "extensions/thing-<sha256>.js", "url": "https://example.test/thing.js"}
+```
+
+この URL があるから、控えが欠けたときに取得へ落ちられます。無ければ、欠けた時点で終わりです。
+
+0.4.0 より前に書かれた Manifest は、同じものを `cached` と綴ります。**拒否します。** いまは何に
+あたるかをメッセージで示します。このファミリーは、古い版が書いたものを読み続けることを約束して
+いません。黙って読み替えると、直すべき人から変更が見えなくなります。古い版で保存した作品は、
+保存し直す必要があります。
+
+`prepareCatalogExtensionChanges` の `distribution` は `embedded` か `remote` です。**ブラウザー**の
+どこに控えるかは開く人の決定で、`load()` へ渡します。どちらでも Manifest は取得元を記録します。
+カタログの拡張はどこかから取得したものなので、embedded は分かっている取得元を捨てずに控えの横へ
+残します。URL は、どちらの形で保存されていても、固定したバイト列を返すか照合します。embedded の
+url が省略可能なのは一般の場合のためで、どこからも取得していないバイト列 — コスチューム、音、
+エディター上で書いた拡張 — には記録すべき取得元がありません。
+
 ## ソースとビルド
 
 ソースもテストも TypeScript で、`src/*.ts` と `test/*.test.ts` に置き、他の `@kubohiroya/turbowarp-*` パッケージと同じ構成にしています。`tsconfig.json` が出力なしの型検査、`tsconfig.build.json` がそれを継承して出力、`test/tsconfig.json` がテスト用の継承設定です。`npm run build`（`tsc -p tsconfig.build.json`）が ES2022 の ESM と型宣言を `dist/` に出力し、`exports`・`main`/`module`・webpack 4 用のルートファイル（`packager.js` など）はすべて `dist/` を指します。`dist/` は Git に含めず、Git 依存としてインストールされるときに `prepare` スクリプトがビルドします。npm パッケージにはビルド済みの `dist/` を含めます。webpack 4 では従来どおり `./webpack4` の Babel 設定が `dist/` を変換します。

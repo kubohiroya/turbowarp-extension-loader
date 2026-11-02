@@ -132,15 +132,15 @@ test('switching distribution releases the copy the replaced entry kept', async (
     const names = async (result: {projectBytes: Uint8Array}) =>
         Object.keys((await decode(result)).zip.files).filter(name => name.startsWith('extensions/'));
     const copy = `extensions/sample-${hash(content('sample'))}.js`;
-    const cached = await prepareCatalogExtensionChanges(await archive(project(), {'extensions/other.js': 'kept'}),
-        [request('sample', {distribution: 'cached'})], host(), {zip: Zip});
-    assert.deepEqual((await names(cached)).sort(), ['extensions/other.js', copy]);
-    const remote = await prepareCatalogExtensionChanges(cached.projectBytes, [request('sample')], host(), {zip: Zip});
-    assert.deepEqual(await names(remote), ['extensions/other.js'], 'the cached copy is gone, unrelated entries stay');
-    // Cached → Embedded reuses the same path, so the copy must survive its own release.
-    const embedded = await prepareCatalogExtensionChanges(cached.projectBytes,
+    const kept = await prepareCatalogExtensionChanges(await archive(project(), {'extensions/other.js': 'kept'}),
         [request('sample', {distribution: 'embedded'})], host(), {zip: Zip});
-    assert.deepEqual((await names(embedded)).sort(), ['extensions/other.js', copy]);
+    assert.deepEqual((await names(kept)).sort(), ['extensions/other.js', copy]);
+    const remote = await prepareCatalogExtensionChanges(kept.projectBytes, [request('sample')], host(), {zip: Zip});
+    assert.deepEqual(await names(remote), ['extensions/other.js'], 'the retained copy is gone, unrelated entries stay');
+    // Embedded again reuses the same path, so the copy must survive its own release.
+    const again = await prepareCatalogExtensionChanges(kept.projectBytes,
+        [request('sample', {distribution: 'embedded'})], host(), {zip: Zip});
+    assert.deepEqual((await names(again)).sort(), ['extensions/other.js', copy]);
 });
 
 test('Embedded to Remote refuses changed server content before requesting new host approval', async () => {
@@ -271,4 +271,23 @@ test('unproven fetch responses, oversized bodies and invalid UTF-8 never reach t
         await assert.rejects(prepareCatalogExtensionChanges(project(), [request('sample')], ports, {zip: Zip}), {code});
         assert.deepEqual(ports.approvals, []);
     }
+});
+
+test('embedding keeps where the bytes came from, so a lost copy can still be recovered', async () => {
+    const result = await prepareCatalogExtensionChanges(await archive(),
+        [request('sample', {distribution: 'embedded'})], host(), {zip: Zip});
+    const {json} = await decode(result);
+    const [spec] = json.turboWarpPlus.extensions as {source: Record<string, unknown>}[];
+    assert.deepEqual(spec!.source, {
+        type: 'embedded', path: `extensions/sample-${hash(content('sample'))}.js`, url: url('sample')
+    });
+});
+
+test('a recorded URL is checked against the pinned bytes even when a copy is retained', async () => {
+    const ports = host({sources: new Map([[url('sample'), encoder.encode('different code')]])});
+    const initial = await prepareCatalogExtensionChanges(await archive(),
+        [request('sample', {distribution: 'embedded'})], host(), {zip: Zip});
+    // Re-embedding re-reads the URL, which must still serve what the manifest pinned.
+    await assert.rejects(prepareCatalogExtensionChanges(initial.projectBytes,
+        [request('sample', {distribution: 'embedded'})], ports, {zip: Zip}), {code: 'DIGEST_MISMATCH'});
 });
