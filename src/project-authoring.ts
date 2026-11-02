@@ -189,8 +189,9 @@ export const PROJECT_URI_PREFIX = 'turbowarp-plus-projects';
  * A fresh identifier for one project: a UUID version 7.
  *
  * Version 7 and not 4 because the first 48 bits are the millisecond clock, so the identifier
- * itself sorts by when the project was first saved. That costs nothing over a random UUID and
- * leaves the ordering available to anything that wants it.
+ * itself sorts by when the project was first saved, to the millisecond. That costs nothing over a
+ * random UUID and leaves the ordering available to anything that wants it. Two identifiers made in
+ * the same millisecond are ordered by their random bits, not by which came first.
  * @returns {string} The UUID, in the canonical lowercase form.
  */
 export function createProjectUUID(): string {
