@@ -176,3 +176,10 @@ test('a load survives a recovered fetch and a final failure still stops the entr
     assert.equal(second.signal?.aborted, true);
     assert.equal(failing.getState().status, 'idle');
 });
+
+test('each retry report says which attempt is next and how many there can be in all', async () => {
+    const reports: {attempt: number; attempts: number; delayMs: number}[] = [];
+    const retrying = withFetchRetry(flaky(2), {baseDelayMs: 1, onRetry: ({attempt, attempts, delayMs}) => reports.push({attempt, attempts, delayMs})});
+    await retrying.fetch(url, reading(new AbortController().signal));
+    assert.deepEqual(reports, [{attempt: 1, attempts: 3, delayMs: 1}, {attempt: 2, attempts: 3, delayMs: 2}]);
+});

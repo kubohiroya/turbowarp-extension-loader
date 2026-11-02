@@ -1,4 +1,5 @@
 import {DEFAULT_LOADER_LIMITS} from './limits.js';
+import {isFetchRejection, markFetchRejection} from './fetch-rejection.js';
 
 /**
  * Where one extension's bytes live.
@@ -109,7 +110,12 @@ export interface FetchRetryOptions {
     maxDelayMs?: number;
     /** Wall clock since the first attempt; no further attempt starts once it is spent. */
     budgetMs?: number;
-    onRetry?: (attempt: Readonly<{url: string; attempt: number; delayMs: number; error: unknown}>) => void;
+    /**
+     * Called before each backoff wait. `attempt` is the retry about to be waited for (1 for the
+     * first), and `attempts` the most this fetch can make in all, the first one included, so a host
+     * can say "attempt 2 of 3" without knowing the retry settings. The budget may end it sooner.
+     */
+    onRetry?: (attempt: Readonly<{url: string; attempt: number; attempts: number; delayMs: number; error: unknown}>) => void;
 }
 export interface RegistrationTransaction {
     register(code: AuthorizedCode, options: {signal: AbortSignal}): Promise<{id: string}>;
@@ -362,6 +368,54 @@ export function isTransientFetchFailure(error: unknown): boolean {
     return !(error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError'));
 }
 
+function worthAskingAgain(error: unknown, depth: number, seen: Set<unknown>): boolean {
+    // `seen` holds only the path down to here: the same error twice side by side is not a cycle.
+    if (depth > 8 || seen.has(error)) return false;
+    seen.add(error);
+    try { return classifyForAskingAgain(error, depth, seen); }
+    finally { seen.delete(error); }
+}
+
+function classifyForAskingAgain(error: unknown, depth: number, seen: Set<unknown>): boolean {
+    if (error instanceof LoaderError) {
+        // The deadline is not anyone's answer: the network, a server or a slow person may be faster next time.
+        if (error.code === 'TIMEOUT') return true;
+        if (error.code === 'FETCH_FAILED') return isTransientFetchFailure(error);
+        // A wrapper says nothing by itself; what it wraps decides, and with nothing wrapped it is unaccounted for.
+        if (error.code === 'LOAD_FAILED') return error.cause !== undefined && worthAskingAgain(error.cause, depth + 1, seen);
+        // Every other code is a refusal asking again would repeat, the person's own cancellation, or
+        // a failed rollback the host must recover from first.
+        return false;
+    }
+    if (error instanceof AggregateError) {
+        const inner: unknown[] = Array.isArray(error.errors) ? error.errors : [];
+        return inner.length > 0 && inner.every(item => worthAskingAgain(item, depth + 1, seen));
+    }
+    // A bare rejection counts only when a fetch port produced it; the same TypeError from host code is a bug.
+    return isFetchRejection(error) && isTransientFetchFailure(error);
+}
+
+/**
+ * Whether a whole operation that failed could answer differently if the person asked again.
+ *
+ * This is for the host holding the rejection of `load()`, `./project-catalog` or
+ * `./project-authoring` — the moment to decide whether to offer "try again". It is a different
+ * question from `isTransientFetchFailure`, which a fetch port asks about one transfer to decide
+ * whether to retry by itself, and which says no to the wrapper an operation rejects with.
+ *
+ * Yes when every failure inside is one a later attempt could avoid: a transport failure a fetch
+ * port rejected with (offline, DNS, CORS, CSP — a browser cannot tell them apart), an HTTP 408, 425,
+ * 429 or 5xx, or the operation's deadline. No when anything inside is a refusal asking again would
+ * repeat — a digest mismatch, a corrupt cache entry, a redirect, an invalid source or manifest, a
+ * trust refusal, any other HTTP 4xx — when the person cancelled, which is their own answer, when
+ * rollback failed and the host must recover first, and for anything the Loader cannot account for,
+ * including a bare `TypeError` that did not come out of a fetch port. One permanent refusal in an
+ * `AggregateError` or a `cause` chain outweighs any number of transient ones.
+ */
+export function isWorthAskingAgain(error: unknown): boolean {
+    return worthAskingAgain(error, 0, new Set());
+}
+
 /**
  * Retry a transient Remote failure a bounded number of times, then give the failure up.
  *
@@ -391,7 +445,7 @@ export function withFetchRetry(port: FetchPort, options: FetchRetryOptions = {})
                     const delayMs = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
                     // The budget covers the waiting too, so no attempt starts once it is spent.
                     if (attempt >= retries || Date.now() - started + delayMs > budgetMs || !isTransientFetchFailure(error)) throw error;
-                    try { options.onRetry?.(Object.freeze({url, attempt: attempt + 1, delayMs, error})); }
+                    try { options.onRetry?.(Object.freeze({url, attempt: attempt + 1, attempts: retries + 1, delayMs, error})); }
                     catch { /* Progress reporting must not change the outcome. */ }
                     await delay(delayMs, readOptions.signal);
                 }
@@ -488,7 +542,8 @@ export function createExtensionLoader(ports: LoaderPorts, options: LoaderOptions
             const url = source.url;
             if (!bytes && url !== undefined) {
                 if (typeof ports.fetcher?.fetch !== 'function') fail('INVALID_PORT', 'Remote fetch port is unavailable', spec.id);
-                const response = await guarded(() => ports.fetcher!.fetch(url, {signal, maxBytes: limits.maxBytes}), signal);
+                const response = await guarded(() => Promise.resolve().then(() => ports.fetcher!.fetch(url, {signal, maxBytes: limits.maxBytes}))
+                    .catch((error: unknown) => { markFetchRejection(error); throw error; }), signal);
                 if (!response || !Array.isArray(response.redirects) || response.redirects.length || response.finalURL !== url) fail('REDIRECT_DENIED', 'Unproven or redirected remote source', spec.id);
                 bytes = snapshotBytes(response.bytes, limits.maxBytes, spec.id);
             }

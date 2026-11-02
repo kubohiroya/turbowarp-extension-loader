@@ -99,6 +99,8 @@ await loader.unload();
 
 あきらめたら最後です。登録は全エントリの検証・認可が揃ってから始まるため、再試行を使い切ったエントリが1件あれば操作全体が失敗します。エントリは1件ずつ解決するので、その後のエントリは取得されません。操作の `AbortSignal` も中止するので、core がもう待っていないポートの処理は停止します。ホスト transaction は rollback し、元の作品が復元されます。そこから先は待っている人が再試行機構であり、ホストは作品を開き直すか拡張の追加をやり直すよう求めます。誰も見ていないため再試行で失敗を吸収しなければならないビルド時のカタログ生成とは、意図して方針を逆にしています。
 
+**「やり直す」を勧めるかどうかは別の問いで、判定も別です。** `isTransientFetchFailure(error)` は fetch ポートが転送1件を見て、自分で再試行するかを決めるためのものです。操作全体の失敗（`load()`、`./project-catalog`、`./project-authoring` の拒否）を受け取ったホストは、代わりに `isWorthAskingAgain(error)` に問います。いちばん多い経路で両者の答えは逆になります。ブラウザーの `TypeError` は `LOAD_FAILED` に包まれてホストに届き、前者は false、後者は true を返します。`isWorthAskingAgain` が true を返すのは、中の失敗がすべて次の試行で避けられうるものだけのときです。fetch ポートから出た転送の失敗（オフライン・DNS・CORS・CSP）、HTTP 408 / 425 / 429 / 5xx、操作の `TIMEOUT` がそれにあたります。問い直しても同じ拒否が返るもの（`DIGEST_MISMATCH`、`CACHE_INTEGRITY`、`REDIRECT_DENIED`、`INVALID_SOURCE`、`TRUST_DENIED`、`UNSUPPORTED_SCHEMA`、それ以外の HTTP 4xx とその他すべてのコード）は false です。利用者が押したキャンセルである `CANCELLED` も、本人の答えなので false です。`ROLLBACK_FAILED` はホストの復旧が先なので false です。説明できないものも false で、ホスト自身が投げた素の `TypeError` もこれにあたります。Loader は出どころによって転送の失敗と区別します。`AggregateError` や `cause` の連鎖のどこかに恒久的な拒否が1つでもあれば false です。また `onRetry` は全体で何回まで試すかを `attempts` で渡すので、ホストは再試行設定を知らなくても「3回中2回目」と出せます。
+
 ## IndexedDB 永続キャッシュ（ブラウザホスト用）
 
 固定された npm `name@exact-version` のCDN配信を想定し、**cache first** とします。ハッシュで固定されたキャッシュがあればオンライン・オフラインを問わずCDNへ問い合わせません。キャッシュミス時のみ既存Remote Fetch Portが取得します。URLに `latest`、semver範囲、バージョン省略等の可変指定を使わないことをホスト側で保証してください。キャッシュの保持にはTTLを設けず、容量超過時のLRU、明示消去、ブラウザのストレージ削除のみで削除します。gzip展開後のSHA-256照合とunsandboxed実行認可は毎回必要です。
@@ -285,7 +287,7 @@ npm run check
 - `isAuthorizedCode(value)` はコアが発行し現在登録中の認可証跡だけを識別します。コピー・作品データによる偽造を拒否し、transaction終了時に失効します。
 - `./session-trust` の `createSessionTrustProvider` はid/digest/source/version/publisher/capabilities/dependenciesへ束縛した承認を保持します。明示された外部ホストのURL/execution方針をUI前に毎回適用し、判定できないEmbedded要求は拒否します。
 - `./memory-cache` の `createMemoryContentCache` はコピー・容量（既定32 MiB、既定最大サイズの拡張2件分）・TTL・LRUを提供し、コアはヒット時にも内容を再検証します。
-- `withFetchRetry(port, options)` は任意の fetch ポートを上記の有限回の再試行で包み、`isTransientFetchFailure(error)` はその分類器、`DEFAULT_FETCH_RETRY` は既定値（再試行2回、400 ms から倍々で上限2秒、合計5秒）です。
+- `withFetchRetry(port, options)` は任意の fetch ポートを上記の有限回の再試行で包み、`isTransientFetchFailure(error)` はその分類器、`isWorthAskingAgain(error)` は失敗した操作を受け取ったホストにやり直しを勧めるべきかを答える判定、`DEFAULT_FETCH_RETRY` は既定値（再試行2回、400 ms から倍々で上限2秒、合計5秒）です。
 - `./webpack4` はGUI/Packager用の同一コアをwebpack 4でビルドするための構成補助です。
 
 実GUI、実Packager 3.14.0の生成HTML、Desktop 1.17.0の互換性はEditor側のE2Eが担当します。標準Desktopや標準WebへLoaderを無断インストールしません。標準Desktopの保存は独自Manifest/ZIPエントリを破棄することを実測しているため、保持対応エディターで保存してください。
