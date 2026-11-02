@@ -12,7 +12,7 @@ npm install @kubohiroya/turbowarp-extension-loader
 
 - `project.json` の独自フィールド `turboWarpPlus` に schema v1 の Manifest を配置します。標準 SB3 仕様ではありません。
 - Manifest の厳格検証、未知フィールド拒否、重複・標準拡張 ID 拒否、依存順、循環・欠落依存拒否。
-- 拡張ごとの Embedded / Remote / Cached 解決、SHA-256 必須固定、UTF-8 検証、コードごと・全体のサイズ上限。
+- 拡張ごとに4つの source 形式のいずれかで解決、SHA-256 必須固定、UTF-8 検証、コードごと・全体のサイズ上限。
 - SHA-256 キーのキャッシュポート。読み出すたびに exact bytes を再検証し、キャッシュ利用時もホストの認可を要求します。
 - 明示的なホスト認可後、全拡張の検証・認可が揃ってから登録を始めます。登録 ID 不一致・登録失敗はホスト transaction の rollback を要求します。
 - キャンセル、取得・認可のタイムアウト、Remote の一時的な失敗の有限回の再試行、重複ロード拒否、unload、診断イベント。
@@ -21,17 +21,22 @@ npm install @kubohiroya/turbowarp-extension-loader
 
 ### ソースの形式
 
-`source` は拡張のバイト列の所在を示し、3つの形式のいずれかを取ります。0.2.0で追加した `cached` は2つの所在を同時に示すため、正本の公開場所を保ったままオフラインでも動作します。
+`source` は拡張のバイト列の所在を示します。作者が決めるもので、4つの形式があります。この4つは SB3 の保存形式および選択画面と同じ名前なので、層の間で読み替えが起きません。
 
-| 形式 | 構造 | 解決順 |
+| 形式 | 構造 | バイト列の出どころ |
 | --- | --- | --- |
-| `embedded` | `{type: 'embedded', path}` | `path` のアーカイブ内エントリ |
-| `remote` | `{type: 'remote', url}` | `url` のHTTPS取得 |
-| `cached` | `{type: 'cached', url, path}` | `path` の保持コピー → `url` のHTTPS取得 |
+| `remote-non-cacheable` | `{type, url}` | 毎回 `url` を HTTPS 取得 |
+| `remote-cacheable` | `{type, url}` | cache port、無ければ `url` を HTTPS 取得 |
+| `embedded-file` | `{type, path, url?}` | `path` のアーカイブ内エントリ、無ければ `url` |
+| `embedded-data` | `{type, url?}` | 作品の文書の `data:` 運び手、無ければ `url` |
 
-保持コピーは弱いソースではありません。ManifestがSHA-256を固定しているため、保持コピーは固定されたコードそのものか、さもなくば `DIGEST_MISMATCH` で失敗します。だからネットワークより先に読んでよいのです。エントリが無い場合は `retained-copy-unavailable` を診断として報告してURLへ退避し、そのURLは `remote` と同じredirect・最終URL方針のもとで固定バイト列を返さなければなりません。`path` は `embedded` と同じ `extensions/*.js` 方針に従い、cache portは両方の所在より優先されます。
+embedded の2つは兄弟です。どちらも「作品だけで、オフラインで、どこでも動く」を実現します。違いは運び手で、運び手が「ほかに誰が読めるか」を決めます。`embedded-data` は、標準 TurboWarp がこの Manifest を知らないまま作品を開けるようにする形です。標準ホストは作品の文書の中の URL を探すので、バイト列がその URL そのものになります。
 
-`cached` は `schemaVersion: 1` を維持するので、使っていないManifestは0.1.0でそのまま読めます。使っているManifestは0.2.0以降を必要とし、古い版は弱い形式で読み込まずに `INVALID_SOURCE` で拒否します。
+持っている中身は弱いソースではありません。ManifestがSHA-256を固定しているため、固定されたコードそのものか、さもなくば `DIGEST_MISMATCH` で失敗します。運び手が欠けている場合は `retained-copy-unavailable` を診断として報告して `url` へ退避し、その URL は参照形と同じ redirect・最終URL方針のもとで固定バイト列を返さなければなりません。`path` は `extensions/*.js` 方針に従います。
+
+キャッシュを読み書きするのは `remote-cacheable` だけです。embedded の作品は既に中身を持っているので、ブラウザーに2つ目の控えを置いても得るものがなく、作者もそれを求めていません。
+
+古い版が使っていた3つの綴り（`remote`、`cached`、`embedded`）は**拒否します**。それぞれ、何が置き換えるかをメッセージで示します。対になった2つは読み替えもしません。古い名前は選択を暗黙にしていたので、それを決めるのは読む人です。
 
 ## ホスト側の接続
 
@@ -71,7 +76,7 @@ await loader.unload();
 - injected fetch ポートは `finalURL` と明示的な空 `redirects` を返す必要があります。ポート自体は信頼済みホストが実装する境界であり、再試行もその境界に置いています（後述）。
 - 取得・認可は応答しないポートでもタイムアウトします。登録処理はキャンセル後も完了を待ってから rollback します。遅れて完了する登録と rollback の競合を避けるため、登録ポートが `AbortSignal` に応答しない場合、登録中の有限時間終了は保証できません。
 - キャッシュの容量・失効・永続化・出所ログはホストのポートが担当します。壊れたキャッシュを暗黙に無視して Remote へ切り替えません。
-- `./packager` はEmbedded / Remote変換、明示承認付きData URL移行、lock/license metadata保持、offline SB3準備を提供します。外部依存資源がある拡張は同梱を推測せず拒否します。署名・発行者鍵のpinningはホスト側で追加できる設計で、初期実装は内容・取得元に束縛したセッション承認です。
+- `./packager` は source 形式の相互変換、明示承認付きData URL移行、lock/license metadata保持、offline SB3準備を提供します。外部依存資源がある拡張は同梱を推測せず拒否します。署名・発行者鍵のpinningはホスト側で追加できる設計で、初期実装は内容・取得元に束縛したセッション承認です。
 - ZIP の実装は `createProjectIO({zip: JSZip})` に注入します。core の codec が ZIP central directory を直接検査し、重複・経路・宣言容量を検証してから、ストリーム展開の実容量と CRC32 を検査します。外部実装の archive port を使う場合も同等の検証が必要です。
 
 既定値は最大64拡張、1拡張16 MiB、合計64 MiB、取得・認可30秒です。1拡張と合計の既定値は project codec の1 entry と全展開量の上限に揃えてあり、作品に格納できる拡張ファイルは Loader でも読めます。ホストは loader options で下げられます。データURLやHTTPの開発モード例外はありません。標準 TurboWarp / 非対応エディターが独自 Manifest と ZIP エントリを破棄する可能性があるため、保持対応のないホストでの再保存は移行手段になりません。
@@ -122,55 +127,123 @@ const loader = createExtensionLoader({...hostPorts, cache});
 - 新たな Remote バイト列を取得し保存した場合も、権限承認は毎回別途必要です。コード内から追加取得される依存リソースや外部サービスはこのキャッシュの対象外です。
 - Web/Editor はこのポートを初期化して注入するだけとし、`scratch-gui` と `turbowarp-plus-editor` に別のキャッシュロジックを実装しないでください。
 
+### そのバイト列が誰のものか、どう手放すか
+
+キャッシュは内容アドレス方式です。キーが digest なので、2つの作品が同じ拡張を使っていても実体は
+1つで、持っていないバイト列のキーに書き込むことはできません。だから共有が安全で、同時に
+**エントリは誰のものでもありません**。もう1つのストアに「claim」を記録することで、作品ごとの
+取り分を一覧し、手放せるようにしています。バイト列を二重に持つことはありません。
+
+```js
+const cache = createIndexedDBContentCache({appURI: manifest.uri, sharedDigests: catalogDigests});
+
+await cache.listBuckets();                 // 何かを持っている作品すべてと、その量
+await cache.listBucket(manifest.uri);      // この作品が持っているもの
+await cache.listBucket(SHARED_BUCKET);     // どの作品のものでもないもの
+await cache.deleteBucket(manifest.uri);    // 手放す。他が参照していないバイト列も回収する
+```
+
+カタログの拡張は版が固定で多くの作品が共有するので、`sharedDigests` でどれか1つの作品の下に
+入らないようにします。そうしないと、最初に取得した作品が、他の全作品が使い回す容量の責任を
+負っているように見え、その作品を手放すと他がまだ使いたいバイト列まで落ちます。この集合は書き込み
+ごとに読むので、カタログの読み込みに合わせて埋めていけます。どの作品を開いているか言えないホスト
+は、すべてを shared に入れます。名前を推測するのは、無いと認めるより悪いからです。
+
+バケットを手放すと claim が落ち、**他が参照していない**バイト列だけが回収されます。2回参照されて
+いる1つの実体は残ります。もう一方の作品は失うことを求めていません。容量超過で追い出すときは
+claim も一緒に落ちるので、バケットが「もう無いもの」を並べることはありません。
+
+誰が入れたかの記録は無いので、作品を手放すとは「**その作品が名指す digest** を手放す」ことです。
+別の作品が使い回したはずのバイト列を落とす可能性があります。代償は取得1回だけですが、人に見せる
+一覧でそれ以上を約束しないようにしたいです。
+
 ## 機能拡張のバイト列がどこから来るか
 
-このファミリーは、機能拡張に限らず何を保持するにも3つの方式で整理しています。
+このファミリーは、機能拡張に限らず何を保持するにも4つの形式で整理しています。どの形式かは
+**作品の作者**が決めます。
 
-| 方式 | ブラウザー（IndexedDB） | 作品（SB3） |
-| --- | --- | --- |
-| `remote` | 残さない | 参照だけ |
-| `cached` | 検証したバイト列を残して使い回す | 参照だけ |
-| `embedded` | 使わない | 作品が中身を持つ |
+| 形式 | ブラウザー（IndexedDB） | 作品（SB3） | 標準 TurboWarp |
+| --- | --- | --- | --- |
+| `remote-non-cacheable` | 残さない | 参照だけ | 開けない |
+| `remote-cacheable` | 検証した控えを残してよい | 参照だけ | 開けない |
+| `embedded-file` | 使わない | 作品が中身を持つ | 開けない |
+| `embedded-data` | 使わない | 作品が中身を持つ | **開ける** |
 
-`embedded` には2通りあります。**`embedded-file`**（アーカイブ内に見えるファイル）と、
-**`embedded-data`**（作品の文書に `data:` で値を埋め込む形）です。
+### 作者が決めること、開く人が断れること
 
-読み込み時に選べるのは `remote` と `cached` だけです。`embedded` は作者の決定で、既に
-Manifest に入っているので尋ねることがありません。残り2つは開く人が自分のブラウザーについて
-決めることなので、作品にも Manifest にも載せず、操作ごとに渡します。
+4つはすべて作者の決定で、既に Manifest に入っています。読み込み時に残る問いはもっと狭く、
+**`remote-cacheable` の控えを、開く人が自分のブラウザーに残すかどうか**だけです。保存先は
+その人の端末なので、作者が許した範囲の中でなら下げられます。範囲の中でだけです。
 
 ```js
 await loader.load(manifest, {
-    // 指定の無いものは cached。この選択肢が無かった頃と同じ挙動になります。
-    caching: new Map([['someextension', 'remote']])
+    // 控えを残さない拡張の id。指定しなければ、作者が許したとおりになります。
+    declineCaching: new Set(['someextension'])
 });
 ```
 
-`remote` は両方向に効きます。その拡張についてキャッシュを読まず、書き込みもしません。
+Map ではなく Set なのは、これが**断ることしかできない**からです。`remote-non-cacheable` は
+禁止であり、書ける反対がありません。作者には開く人から見えない理由があります——控えがあると、
+URL が固定したバイト列を返さなくなったことを控えが尽きるまで隠してしまう。共用の機械に渡す
+作品にコードを残したくない。断るのは常に安全で、代償はせいぜい取得1回です。他の形式を名指し
+ても効果はありません。残り3つはどちらにしてもキャッシュの扱いが決まっています。
+
+断る指定は両方向に効きます。その拡張についてキャッシュを読まず、書き込みもしません。
 何も残したくないと言った人には、何も残りません。
 
-### 作品が保持の仕方をどう書くか
+### 参照形へ戻れるかどうか
 
-`source.type` は表のとおり2値です。作品が中身を持つ `embedded` と、参照だけを持つ `remote`
-です。`embedded` は取得元 URL も記録できます。
+embedded の `url` は、バイト列の取得元を記録します。
 
 ```json
-{"type": "embedded", "path": "extensions/thing-<sha256>.js", "url": "https://example.test/thing.js"}
+{"type": "embedded-file", "path": "extensions/thing-<sha256>.js", "url": "https://example.test/thing.js"}
 ```
 
-この URL があるから、控えが欠けたときに取得へ落ちられます。無ければ、欠けた時点で終わりです。
+これは2つの働きをします。運び手が欠けたときに取得へ落ちられること、そして**参照形へ戻る道を
+残す唯一の手がかり**であること。無ければ、その作品を `remote-cacheable` へ変換することは
+二度とできません。指す先が存在しないからです。
 
-0.4.0 より前に書かれた Manifest は、同じものを `cached` と綴ります。**拒否します。** いまは何に
-あたるかをメッセージで示します。このファミリーは、古い版が書いたものを読み続けることを約束して
-いません。黙って読み替えると、直すべき人から変更が見えなくなります。古い版で保存した作品は、
-保存し直す必要があります。
+`prepareCatalogExtensionChanges` の `distribution` も同じ4つの名前を取ります。カタログの拡張は
+どこかから取得したものなので、embedded のどちらの形も、分かっている取得元を捨てずに中身の横へ
+残します。URL は、どの形で保存されていても、固定したバイト列を返すか照合します。url が省略可能
+なのは一般の場合のためで、どこからも取得していないバイト列 — コスチューム、音、エディター上で
+書いた拡張 — には記録すべき取得元がありません。
 
-`prepareCatalogExtensionChanges` の `distribution` は `embedded` か `remote` です。**ブラウザー**の
-どこに控えるかは開く人の決定で、`load()` へ渡します。どちらでも Manifest は取得元を記録します。
-カタログの拡張はどこかから取得したものなので、embedded は分かっている取得元を捨てずに控えの横へ
-残します。URL は、どちらの形で保存されていても、固定したバイト列を返すか照合します。embedded の
-url が省略可能なのは一般の場合のためで、どこからも取得していないバイト列 — コスチューム、音、
-エディター上で書いた拡張 — には記録すべき取得元がありません。
+## 作品を同定するもの
+
+Manifest は `uri` を持てます。その作品をダウンロードできる住所で、同時にその作品を同定するもの
+です。
+
+```json
+{"schemaVersion": 1, "uri": "https://example.test/editor/turbowarp-plus-projects/66/66aa/0193f0a1-2b3c-7d4e-8f01-2233445566aa.sb3", "extensions": []}
+```
+
+1つの作品に1つの URI。何度編集しても変わりません。だから指紋ではなく住所なのです。指紋は保存
+するたびに変わるので、ブラウザーのキャッシュも開く人の選択の記録も、触るたびに同じ作品を別名で
+綴じてしまいます。住所は中身が変わっても変わりません。
+
+`./project-authoring` の `createProjectUUID` と `defaultProjectURI` が、作者が住所を選んで
+いないときに与える住所を組みます。
+
+```js
+const uri = defaultProjectURI(location.origin + location.pathname, createProjectUUID());
+```
+
+オリジンはエディター自身のもので、配信していない host を名乗ることはありません。この住所は作品
+を人に渡すとき SB3 の中に入って一緒に移動するからです。識別子は UUID version 7 なので、初回保存
+の時刻順に並びます。2段のディレクトリは UUID の**末尾**から取ります。version 7 の先頭はミリ秒
+時計の上位で、ほとんど動かないので、先頭でシャーディングすると**作られた全作品が1つの
+ディレクトリに入ります**。
+
+この住所は意図的に不透明です。読みやすい住所はタイトル由来になり、タイトルを変えると変わるので、
+1つの作品が2つ目の名前で綴じられます。読みやすさは「公開する」という意図的な操作のもので、その
+ときは作者が自分で住所を名乗ります。人が読む一覧には、これと並べて作品のタイトルを出します。
+
+作者がそこへ公開するまで、この住所は何も返しません。それが想定どおりです。**解決しない URI は
+何も語りません。** 保存したが公開していない作品と、公開したが住所が腐った作品は、まったく同じに
+見えます。解決するかどうかで何かを決めてはいけません。まして何を消すかを決めてはいけません。
+URI は作品自身の申告で、検証していません。作品は他の住所も名乗れます。それで壊れるのは帳簿だけ
+です。キャッシュは digest をキーにしていて、ヒットごとに照合するからです。
 
 ## ソースとビルド
 
@@ -238,7 +311,7 @@ const candidate = await prepareExtensionAddition(currentSB3, {
 
 ## 一覧からの一括設定API
 
-`./project-catalog` の `prepareCatalogExtensionChanges(currentSB3, requests, ports, options)` は、カタログの選択をまとめてSB3候補へ反映します。requestは `{id, url, distribution: 'embedded' | 'remote' | 'cached', execution: 'sandboxed' | 'unsandboxed', dependencies?, version?}` です。JS取得・SHA-256計算・依存順・全件検証・ホスト承認を共通Loaderで行い、全件承認後に `{projectBytes, manifest}` を返します。実VMには触りません。
+`./project-catalog` の `prepareCatalogExtensionChanges(currentSB3, requests, ports, options)` は、カタログの選択をまとめてSB3候補へ反映します。requestは `{id, url, distribution: 'remote-non-cacheable' | 'remote-cacheable' | 'embedded-file' | 'embedded-data', execution: 'sandboxed' | 'unsandboxed', dependencies?, version?}` です。JS取得・SHA-256計算・依存順・全件検証・ホスト承認を共通Loaderで行い、全件承認後に `{projectBytes, manifest}` を返します。実VMには触りません。
 
 既存Plus拡張の配布方式・実行モードを変える場合は、検証済みコードとSHA-256・発行者・バージョン・lockを保持します。Remote出力先が現在のコードを返さない場合、更新として勝手に追従せず拒否します。`readProjectAuthoringState(input, options)` は検証済みManifestを返し、UIの状態復元に使えます。これらの作品情報は実行許可ではありません。
 

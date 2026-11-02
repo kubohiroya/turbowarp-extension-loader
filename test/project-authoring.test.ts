@@ -2,8 +2,9 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import Zip from '@turbowarp/jszip';
+import {validateManifest} from '@kubohiroya/turbowarp-extension-loader';
 import type {ExtensionSource, FetchPort, FetchResult, ResolvedCode} from '@kubohiroya/turbowarp-extension-loader';
-import {prepareExtensionAddition, type AuthoringPorts, type ExtensionAdditionRequest}
+import {createProjectUUID, defaultProjectURI, prepareExtensionAddition, type AuthoringPorts, type ExtensionAdditionRequest}
     from '@kubohiroya/turbowarp-extension-loader/project-authoring';
 import {prepareOfflinePackage} from '@kubohiroya/turbowarp-extension-loader/packager';
 import {createSessionTrustProvider} from '@kubohiroya/turbowarp-extension-loader/session-trust';
@@ -17,8 +18,8 @@ const code = '﻿globalThis.__authoringExecuted = true;\nScratch.extensions.regi
 const bytes = new TextEncoder().encode(code);
 const sha256 = createHash('sha256').update(bytes).digest('hex');
 const url = 'https://example.test/sample.js';
-const embedded = (id = 'sample', content: Uint8Array | Blob = bytes) => ({id, source: {type: 'embedded' as const}, bytes: content});
-const remote = (id = 'sample', target = url) => ({id, source: {type: 'remote' as const, url: target}});
+const embedded = (id = 'sample', content: Uint8Array | Blob = bytes) => ({id, source: {type: 'embedded-file' as const}, bytes: content});
+const remote = (id = 'sample', target = url) => ({id, source: {type: 'remote-cacheable' as const, url: target}});
 /** Tests add IDs, legacy URLs and a prior lock, so the project fixture stays wider than one save. */
 interface ProjectFixture {
     targets: unknown[];
@@ -52,7 +53,7 @@ async function jsonOf(result: {projectBytes: Uint8Array}) {
     return {zip, json: JSON.parse(await zip.file('project.json')!.async('string'))};
 }
 const embeddedPath = (source: ExtensionSource) => {
-    assert.ok(source.type === 'embedded');
+    assert.ok(source.type === 'embedded-file');
     return source.path;
 };
 
@@ -85,13 +86,13 @@ test('Remote addition fetches once, computes the pin and remains Remote until of
     const result = await prepareExtensionAddition(await archive(), remote(), host, {zip: Zip});
     assert.deepEqual(host.fetches, [url]);
     assert.equal(result.spec.sha256, sha256);
-    assert.deepEqual(result.spec.source, {type: 'remote', url});
+    assert.deepEqual(result.spec.source, {type: 'remote-cacheable', url});
     const {zip} = await jsonOf(result);
     assert.equal(zip.file('extensions/sample.js'), null);
     assert.equal(host.reviews.length, 1);
     const offline = await prepareOfflinePackage(result.projectBytes, host, {zip: Zip, resourceDependencies: {sample: []}});
     assert.equal(offline.offline, true);
-    assert.equal(offline.manifest.extensions[0].source.type, 'embedded');
+    assert.equal(offline.manifest.extensions[0].source.type, 'embedded-file');
     const bundled = await Zip.loadAsync(offline.projectBytes);
     assert.deepEqual(await bundled.file(embeddedPath(offline.manifest.extensions[0].source))!.async('uint8array'), bytes);
     assert.equal(host.reviews.length, 1, 'host session approval is reused for the same exact source and bytes');
@@ -133,7 +134,7 @@ test('reserved, existing, legacy URL and existing Plus IDs are rejected before f
 test('unsafe URLs, byte-supplied Remote sources and archive path collisions fail before fetch', async () => {
     const host = ports();
     for (const source of ['http://example.test/code.js', 'https://user:password@example.test/code.js', `${url}#fragment`]) {
-        await assert.rejects(prepareExtensionAddition(project(), {id: 'sample', source: {type: 'remote', url: source}}, host, {zip: Zip}), {code: 'INVALID_SOURCE'});
+        await assert.rejects(prepareExtensionAddition(project(), {id: 'sample', source: {type: 'remote-cacheable', url: source}}, host, {zip: Zip}), {code: 'INVALID_SOURCE'});
     }
     // Supplying bytes for a Remote source is exactly what the API must refuse, so the types forbid it too.
     await assert.rejects(prepareExtensionAddition(project(), {...remote(), bytes} as unknown as ExtensionAdditionRequest, host, {zip: Zip}), {code: 'INVALID_ADDITION'});
@@ -199,9 +200,53 @@ test('oversized Blob is rejected without reading it, and total byte limits inclu
 
 test('malformed archive and unsafe path fail without approval or fetch', async () => {
     const host = ports();
-    const unsafe = {...embedded(), source: {type: 'embedded' as const, path: 'extensions/../code.js'}};
+    const unsafe = {...embedded(), source: {type: 'embedded-file' as const, path: 'extensions/../code.js'}};
     await assert.rejects(prepareExtensionAddition(project(), unsafe, host, {zip: Zip}), {code: 'INVALID_SOURCE'});
     await assert.rejects(prepareExtensionAddition(new Uint8Array([0x50, 0x4b, 1, 2]), remote(), host, {zip: Zip}), {code: 'INVALID_ARCHIVE'});
     assert.deepEqual(host.fetches, []);
     assert.deepEqual(host.reviews, []);
+});
+
+test('a project identifier sorts by when it was made, and still shards evenly', () => {
+    const ids = Array.from({length: 200}, createProjectUUID);
+    for (const id of ids) assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.equal(new Set(ids).size, ids.length);
+    // Version 7 puts the clock first, so the identifiers are already in creation order.
+    assert.deepEqual([...ids].sort(), ids.map(id => id).sort());
+    assert.ok(ids[0]! <= ids.at(-1)!);
+    // The shard comes from the random tail. Sharding on the leading characters would put every
+    // one of these in a single directory, because the clock's top byte barely moves.
+    const shardOf = (uri: string) => uri.split('/').at(-3)!;
+    const leading = new Set(ids.map(id => id.slice(0, 2)));
+    const shards = new Set(ids.map(id => shardOf(defaultProjectURI('https://example.test/editor/', id))));
+    assert.equal(leading.size, 1, 'the leading characters are all the same');
+    assert.ok(shards.size > 50, `the tail divides them: ${shards.size} directories`);
+});
+
+test('an unchosen address claims only the origin that assigned it', () => {
+    const uuid = '0193f0a1-2b3c-7d4e-8f01-2233445566aa';
+    assert.equal(defaultProjectURI('https://example.test/editor/', uuid),
+        `https://example.test/editor/turbowarp-plus-projects/66/66aa/${uuid}.sb3`);
+    // A trailing slash is the author's, not a second path segment.
+    assert.equal(defaultProjectURI('https://example.test/editor', uuid),
+        defaultProjectURI('https://example.test/editor/', uuid));
+    assert.equal(defaultProjectURI('https://example.test', uuid),
+        `https://example.test/turbowarp-plus-projects/66/66aa/${uuid}.sb3`);
+    // The same rule as every other address this family records.
+    for (const origin of ['http://example.test/', 'https://user:pass@example.test/', 'not a url']) {
+        assert.throws(() => defaultProjectURI(origin, uuid), {code: 'INVALID_PROJECT_URI'});
+    }
+    // A version 4 UUID would not sort, so it is refused rather than quietly accepted.
+    assert.throws(() => defaultProjectURI('https://example.test/', '0193f0a1-2b3c-4d4e-8f01-2233445566aa'),
+        {code: 'INVALID_PROJECT_URI'});
+});
+
+test('a project URI is validated like any other address, and is optional', () => {
+    const base = {schemaVersion: 1, extensions: []};
+    assert.equal(validateManifest(base).uri, undefined);
+    const uri = 'https://example.test/editor/turbowarp-plus-projects/66/66aa/0193f0a1-2b3c-7d4e-8f01-2233445566aa.sb3';
+    assert.equal(validateManifest({...base, uri}).uri, uri);
+    for (const bad of ['http://example.test/a.sb3', 'https://example.test/a.sb3#x', 'https://u:p@example.test/a.sb3', 7]) {
+        assert.throws(() => validateManifest({...base, uri: bad}), {code: 'INVALID_PROJECT_URI'});
+    }
 });

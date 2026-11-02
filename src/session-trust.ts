@@ -1,4 +1,4 @@
-import {LoaderError, type AuthorizationDecision, type ResolvedCode} from './index.js';
+import {isRemoteSource, LoaderError, type AuthorizationDecision, type ResolvedCode} from './index.js';
 
 export interface SessionTrustOptions {
     requestApproval(code: ResolvedCode, options: {signal?: AbortSignal}): Promise<boolean>;
@@ -39,7 +39,7 @@ export function createSessionTrustProvider({requestApproval, maxApprovals = 128,
             // An existing URL-only host policy cannot authorize an archive path.
             // Recheck before cached consent so later host restrictions take precedence.
             if (policy.canLoad || policy.mode) {
-                if (code.source.type !== 'remote') return Object.freeze({allowed: false});
+                if (!isRemoteSource(code.source)) return Object.freeze({allowed: false});
                 if (policy.canLoad) {
                     const allowed = await policy.canLoad(code.source.url, {signal});
                     check(signal);

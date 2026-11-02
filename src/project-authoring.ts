@@ -1,4 +1,4 @@
-import {LoaderError, validateManifest, type ExecutionMode, type ExtensionSpec, type FetchPort, type FetchResult,
+import {isRemoteSource, LoaderError, validateManifest, type ExecutionMode, type ExtensionSpec, type FetchPort, type FetchResult,
     type LoaderOptions, type LoaderPorts, type Manifest, type ReadOptions} from './index.js';
 import {createProjectIO, type ArchiveLimits, type ZipConstructor} from './project-codec.js';
 import {readPreparedProject} from './project-data.js';
@@ -8,12 +8,12 @@ import {DEFAULT_LOADER_LIMITS} from './limits.js';
 export type ExtensionAdditionRequest = {
     id: string;
     execution?: ExecutionMode;
-    source: {type: 'embedded'; path?: string};
+    source: {type: 'embedded-file'; path?: string};
     bytes: Uint8Array | Blob;
 } | {
     id: string;
     execution?: ExecutionMode;
-    source: {type: 'remote'; url: string};
+    source: {type: 'remote-non-cacheable' | 'remote-cacheable'; url: string};
     bytes?: never;
 };
 export type AuthoringPorts = Pick<LoaderPorts, 'fetcher' | 'trustProvider' | 'cache' | 'diagnostics'>;
@@ -63,18 +63,18 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         const value = limits[key];
         if (value !== undefined && (!Number.isSafeInteger(value) || value < 1)) fail('INVALID_OPTIONS', `Invalid ${key}`);
     }
-    const source = plainObject(request.source) && request.source.type === 'embedded' && request.source.path === undefined ?
+    const source = plainObject(request.source) && request.source.type === 'embedded-file' && request.source.path === undefined ?
         {...request.source, path: `extensions/${request.id}.js`} : request.source;
     // Reuse the runtime schema before any bytes are read or network requests begin.
     const draft = validateManifest({schemaVersion: 1, extensions: [{id: request.id, source,
         execution: request.execution === undefined ? 'unsandboxed' : request.execution,
         sha256: '0'.repeat(64)}]}, loaderOptions).extensions[0];
-    if (draft.source.type === 'remote' && request.bytes !== undefined) fail('INVALID_ADDITION', 'Remote sources must be fetched from their URL', draft.id);
+    if (isRemoteSource(draft.source) && request.bytes !== undefined) fail('INVALID_ADDITION', 'Remote sources must be fetched from their URL', draft.id);
     if (request.bytes instanceof Uint8Array && (request.bytes.byteLength < 1 || request.bytes.byteLength > limits.maxBytes)) {
         fail('INVALID_BYTES', 'Extension file is empty or exceeds the byte limit', draft.id);
     }
     const suppliedBytes = request.bytes instanceof Uint8Array ? new Uint8Array(request.bytes) : request.bytes;
-    if (draft.source.type === 'embedded' && !(suppliedBytes instanceof Uint8Array) && !(suppliedBytes instanceof Blob)) {
+    if (draft.source.type === 'embedded-file' && !(suppliedBytes instanceof Uint8Array) && !(suppliedBytes instanceof Blob)) {
         fail('INVALID_BYTES', 'Embedded additions require a JavaScript file', draft.id);
     }
     if (suppliedBytes instanceof Blob && (suppliedBytes.size < 1 || suppliedBytes.size > limits.maxBytes)) {
@@ -111,11 +111,11 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         if (previous.some(spec => spec.id === draft.id) || (project.extensions || []).includes(draft.id) ||
             Object.hasOwn(project.extensionURLs || {}, draft.id)) fail('DUPLICATE_EXTENSION', 'This extension ID already belongs to the project', draft.id);
         validateManifest({schemaVersion: 1, extensions: [...previous, draft]}, loaderOptions);
-        if (draft.source.type === 'embedded' && Object.hasOwn(files, draft.source.path)) {
+        if (draft.source.type === 'embedded-file' && Object.hasOwn(files, draft.source.path)) {
             fail('SOURCE_PATH_COLLISION', 'The embedded path already exists in this project', draft.id);
         }
         let bytes: unknown;
-        if (draft.source.type === 'embedded') {
+        if (!isRemoteSource(draft.source)) {
             bytes = suppliedBytes instanceof Blob ? new Uint8Array(await wait(() => suppliedBytes.arrayBuffer())) : suppliedBytes;
         } else {
             const {url} = draft.source;
@@ -141,7 +141,7 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         project.turboWarpPlus = manifest;
         project.extensions = [...(project.extensions || []), spec.id];
         files['project.json'] = encoder.encode(JSON.stringify(project));
-        if (spec.source.type === 'embedded') files[spec.source.path] = verified;
+        if (spec.source.type === 'embedded-file') files[spec.source.path] = verified;
         const archive = new Zip();
         for (const [path, content] of Object.entries(files)) archive.file(path, content, {dir: path.endsWith('/'), createFolders: false});
         const projectBytes: Uint8Array = await wait(() => archive.generateAsync({type: 'uint8array', compression: 'STORE'}));
@@ -149,7 +149,7 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         io.activate(candidate.context);
         // Only the newly fetched URL is snapshotted. Other pinned sources keep the host's fetch policy.
         const pinned = spec.source;
-        const fetcher: FetchPort | undefined = pinned.type === 'remote' ? {
+        const fetcher: FetchPort | undefined = isRemoteSource(pinned) ? {
             fetch(url: string, options: ReadOptions) {
                 if (url === pinned.url) return Promise.resolve({bytes: new Uint8Array(verified), finalURL: url, redirects: []});
                 return ports.fetcher!.fetch(url, options);
@@ -162,4 +162,59 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         clearTimeout(timer);
         externalSignal?.removeEventListener('abort', abort);
     }
+}
+
+const UUIDV7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+/** Where an unchosen address is put, relative to whatever origin assigns it. */
+export const PROJECT_URI_PREFIX = 'turbowarp-plus-projects';
+
+/**
+ * A fresh identifier for one project: a UUID version 7.
+ *
+ * Version 7 and not 4 because the first 48 bits are the millisecond clock, so the identifier
+ * itself sorts by when the project was first saved. That costs nothing over a random UUID and
+ * leaves the ordering available to anything that wants it.
+ * @returns {string} The UUID, in the canonical lowercase form.
+ */
+export function createProjectUUID(): string {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    const time = Date.now();
+    for (let index = 0; index < 6; index++) bytes[index] = (time / 2 ** (8 * (5 - index))) & 0xff;
+    bytes[6] = 0x70 | (bytes[6]! & 0x0f);
+    bytes[8] = 0x80 | (bytes[8]! & 0x3f);
+    const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/**
+ * The address a project is given when its author has not chosen one.
+ *
+ * Every project needs an address from its first save, because that address is what identifies it:
+ * the browser's caches and the opener's recorded decisions are filed under it. Nothing is served
+ * there until the author actually publishes, and that is fine — the point is that the name does
+ * not have to change if they ever do.
+ *
+ * So this address is deliberately opaque. A readable one would be derived from the title and
+ * would change when the title changed, filing one work under a second name. Readability belongs
+ * to the deliberate act of publishing, where the author names the address themselves; a list that
+ * has to be read by a person shows the project's title beside this.
+ *
+ * The two directory levels divide the projects so that no single directory grows without bound,
+ * and they are taken from the **end** of the UUID. A version 7 UUID begins with the top of a
+ * millisecond clock, which barely moves, so sharding on its first characters would put every
+ * project ever created in one directory. The last characters are the random half.
+ * @param {string} origin Where the editor that assigns this is served from; it claims no other host.
+ * @param {string} uuid A version 7 UUID, from createProjectUUID.
+ * @returns {string} The absolute HTTPS address.
+ */
+export function defaultProjectURI(origin: string, uuid: string): string {
+    if (!UUIDV7.test(uuid)) fail('INVALID_PROJECT_URI', 'A version 7 UUID is required');
+    let base: URL;
+    try { base = new URL(origin); } catch { fail('INVALID_PROJECT_URI', 'An absolute origin is required'); }
+    if (base.protocol !== 'https:' || base.username || base.password) {
+        fail('INVALID_PROJECT_URI', 'A project origin must be HTTPS without credentials');
+    }
+    const tail = uuid.replaceAll('-', '').slice(-4);
+    const path = `${base.pathname.replace(/\/*$/, '')}/${PROJECT_URI_PREFIX}/${tail.slice(0, 2)}/${tail}/${uuid}.sb3`;
+    return new URL(path, base.origin).href;
 }

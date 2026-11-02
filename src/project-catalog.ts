@@ -1,6 +1,6 @@
-import {LoaderError, validateManifest, type ExecutionMode, type ExtensionSource, type FetchPort, type FetchResult,
+import {isRemoteSource, LoaderError, validateManifest, type ExecutionMode, type ExtensionSource, type FetchPort, type FetchResult,
     type LoaderOptions, type LoaderPorts, type Manifest} from './index.js';
-import {createProjectIO, type ArchiveLimits, type ZipConstructor} from './project-codec.js';
+import {createProjectIO, DATA_CARRIER_PREFIX, type ArchiveLimits, type ZipConstructor} from './project-codec.js';
 import {readPreparedProject} from './project-data.js';
 import {collectVerifiedCodes} from './verified-code.js';
 import {DEFAULT_LOADER_LIMITS, DEFAULT_TOTAL_BYTES} from './limits.js';
@@ -9,13 +9,16 @@ export interface CatalogExtensionRequest {
     id: string;
     url: string;
     /**
-     * Where the project keeps it: carrying the bytes, or only a reference.
+     * Which of the four forms the project keeps it in, as the author decided.
      *
-     * Either way the manifest records where the bytes came from, so a project that carries them
-     * can still recover if its retained copy is lost. There is deliberately no third value:
-     * where bytes are cached in the browser is the opener's decision, passed to `load()`.
+     * The same four names the manifest and the SB3 save format use, so this is the author's
+     * decision written once. Either reference form records the address; either embedded form
+     * records it too, beside the bytes, which is what keeps a path back to a reference open.
+     *
+     * Whether the person opening the project actually keeps a copy of a `remote-cacheable`
+     * extension is theirs to decline, through `declineCaching` on `load()`.
      */
-    distribution: 'embedded' | 'remote';
+    distribution: ExtensionSource['type'];
     execution: ExecutionMode;
     dependencies?: string[];
     version?: string;
@@ -29,6 +32,13 @@ export interface CatalogOptions {
 export type CatalogPorts = Pick<LoaderPorts, 'fetcher' | 'trustProvider' | 'cache' | 'diagnostics'>;
 
 const encoder = new TextEncoder();
+// A standard TurboWarp host looks for a URL in the project document and knows nothing of this
+// manifest, so for that carrier the bytes have to be the address itself.
+const dataCarrier = (bytes: Uint8Array) => {
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return `${DATA_CARRIER_PREFIX}${btoa(binary)}`;
+};
 const digest = async (bytes: BufferSource) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)),
     value => value.toString(16).padStart(2, '0')).join('');
 function fail(code: string, message: string, id?: string): never { throw new LoaderError(code, message, id); }
@@ -84,13 +94,16 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
     try {
         const seen = new Set<string>();
         const choices = requests.map(request => {
-            if (!request || !['remote', 'embedded'].includes(request.distribution) || seen.has(request.id)) {
+            if (!request || !['remote-non-cacheable', 'remote-cacheable', 'embedded-file', 'embedded-data']
+                .includes(request.distribution) || seen.has(request.id)) {
                 fail('INVALID_ADDITION', 'Invalid or duplicate catalog selection', request?.id);
             }
             seen.add(request.id);
             const execution = request.execution;
             const spec = validateManifest({schemaVersion: 1, extensions: [{id: request.id,
-                source: {type: 'remote', url: request.url}, execution, sha256: '0'.repeat(64),
+                // Validated as a reference whatever the request asks for: this is only here to
+                // put the URL and the execution mode through the schema before anything is read.
+                source: {type: 'remote-cacheable', url: request.url}, execution, sha256: '0'.repeat(64),
                 ...(request.version ? {version: request.version} : {})}]}, loaderOptions).extensions[0];
             if (request.dependencies !== undefined && (!Array.isArray(request.dependencies) ||
                 request.dependencies.some(id => typeof id !== 'string'))) fail('INVALID_ADDITION', 'Invalid catalog dependencies', spec.id);
@@ -132,22 +145,27 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
         }
         // Copies the replaced entries kept; released below unless a final entry still names them.
         const replacedPaths = new Set<string>();
+        // Bytes for a data carrier, kept until the project document is written.
+        const carriers = new Map<string, Uint8Array>();
         for (const choice of choices) {
             const replaced = prepared.manifest?.extensions.find(spec => spec.id === choice.id)?.source;
-            if (replaced && replaced.type !== 'remote') replacedPaths.add(replaced.path);
+            if (replaced?.type === 'embedded-file') replacedPaths.add(replaced.path);
             const old = previous.get(choice.id);
-            // Every catalog request was validated as a Remote source above.
-            const bytes = old ? encoder.encode(old.code) : await fetchBytes((choice.source as {url: string}).url);
+            // Validated as a reference above, so it has an address to fetch and to record.
+            if (!isRemoteSource(choice.source)) fail('INVALID_ADDITION', 'A catalog request is a reference', choice.id);
+            const origin = choice.source.url;
+            const bytes = old ? encoder.encode(old.code) : await fetchBytes(origin);
             const sha256 = await wait(() => digest(bytes));
             if (old && old.sha256 !== sha256) fail('CONVERSION_INTEGRITY', 'Source conversion changed bytes', choice.id);
             const retainedPath = `extensions/${choice.id}-${sha256}.js`;
-            // A catalog extension was fetched from an address, so embedding keeps that address
-            // beside the copy rather than discarding what is already known. Bytes nobody fetched —
-            // a costume, a sound, an extension written here — have no address to record, which is
-            // why a url is optional on an embedded source.
-            const source: ExtensionSource = choice.distribution === 'embedded' ?
-                {type: 'embedded', path: retainedPath, url: (choice.source as {url: string}).url} :
-                choice.source;
+            // A catalog extension was fetched from an address, so either embedded form keeps that
+            // address beside the bytes rather than discarding what is already known. Bytes nobody
+            // fetched — a costume, a sound, an extension written here — have no address to record,
+            // which is why a url is optional on an embedded source.
+            const source: ExtensionSource =
+                choice.distribution === 'embedded-file' ? {type: 'embedded-file', path: retainedPath, url: origin} :
+                    choice.distribution === 'embedded-data' ? {type: 'embedded-data', url: origin} :
+                        {type: choice.distribution, url: origin};
             // A recorded URL is a promise about what it serves, so it must still serve exactly
             // the pinned bytes — whether it is the only place they live or sits beside a copy.
             if (source.url !== undefined) {
@@ -156,25 +174,30 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
                     fail('DIGEST_MISMATCH', 'Remote source does not serve the currently pinned bytes', choice.id);
                 }
             }
-            // An embedded choice retains a copy in the project.
-            if (source.type !== 'remote') {
+            // Only the file carrier has an archive entry; the data carrier is written below,
+            // into the project document, because that is where a standard host looks for it.
+            if (source.type === 'embedded-file') {
                 if (Object.hasOwn(files, source.path) && await wait(() => digest(files[source.path])) !== sha256) {
                     fail('SOURCE_PATH_COLLISION', 'The embedded path belongs to different content', choice.id);
                 }
                 files[source.path] = new Uint8Array(bytes);
             }
+            if (source.type === 'embedded-data') carriers.set(choice.id, new Uint8Array(bytes));
             extensions.set(choice.id, {id: choice.id, source, execution: choice.execution, sha256,
                 ...((old?.version || choice.version) ? {version: old?.version || choice.version} : {}),
                 ...(old?.publisher ? {publisher: old.publisher} : {}),
                 capabilities: old?.capabilities || [], dependencies: choice.dependencies});
         }
         const manifest = validateManifest({schemaVersion: 1, extensions: [...extensions.values()]}, loaderOptions);
-        for (const spec of manifest.extensions) if (spec.source.type !== 'remote') replacedPaths.delete(spec.source.path);
+        for (const spec of manifest.extensions) if (spec.source.type === 'embedded-file') replacedPaths.delete(spec.source.path);
         for (const path of replacedPaths) delete files[path];
         project.turboWarpPlus = manifest;
         project.extensions = [...new Set([...(project.extensions || []), ...manifest.extensions.map(spec => spec.id)])];
         const urls = {...(project.extensionURLs || {})};
-        for (const spec of manifest.extensions) delete urls[spec.id];
+        for (const spec of manifest.extensions) {
+            if (spec.source.type === 'embedded-data') urls[spec.id] = dataCarrier(carriers.get(spec.id)!);
+            else delete urls[spec.id];
+        }
         project.extensionURLs = urls;
         files['project.json'] = encoder.encode(JSON.stringify(project));
         const archive = new Zip!();

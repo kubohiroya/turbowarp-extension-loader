@@ -9,7 +9,7 @@ const code = new TextEncoder().encode('Scratch.extensions.register({getInfo(){re
 /** Manifest fixtures are rewritten field by field, including into shapes the public types forbid. */
 const manifest: {schemaVersion: number; extensions: Record<string, unknown>[]} = {
     schemaVersion: 1, extensions: [{id: 'sample', execution: 'unsandboxed',
-        source: {type: 'embedded', path: 'extensions/sample.js'}, sha256: createHash('sha256').update(code).digest('hex')}]};
+        source: {type: 'embedded-file', path: 'extensions/sample.js'}, sha256: createHash('sha256').update(code).digest('hex')}]};
 const hasCode = (expected: string) => (error: unknown) => (error as {code?: string}).code === expected;
 async function fixture(project: unknown = {targets: [], extensions: ['pen', 'sample'],
     extensionURLs: {sample: 'https://untrusted.invalid/a.js'}, turboWarpPlus: manifest}) {
@@ -59,11 +59,11 @@ test('manifestless project delegates exact original input; contexts cannot be fo
 
 test('remote-only JSON needs no ZIP dependency and malformed manifest fails closed', async () => {
     const remote = structuredClone(manifest);
-    remote.extensions[0].source = {type: 'remote', url: 'https://example.org/a.js'};
+    remote.extensions[0].source = {type: 'remote-cacheable', url: 'https://example.org/a.js'};
     const io = createProjectIO();
     const input = {targets: [], turboWarpPlus: remote};
     const result = await io.prepare(input);
-    assert.equal(result.manifest!.extensions[0].source.type, 'remote');
+    assert.equal(result.manifest!.extensions[0].source.type, 'remote-cacheable');
     assert.equal((result.input as {turboWarpPlus?: unknown}).turboWarpPlus, undefined);
     await assert.rejects(io.prepare({turboWarpPlus: {schemaVersion: 999, extensions: []}}), hasCode('UNSUPPORTED_SCHEMA'));
     await assert.rejects(io.prepare({turboWarpPlus: manifest}), /Missing embedded/);

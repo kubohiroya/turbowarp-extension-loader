@@ -4,7 +4,7 @@ import type {ResolvedCode} from '@kubohiroya/turbowarp-extension-loader';
 import {createSessionTrustProvider} from '@kubohiroya/turbowarp-extension-loader/session-trust';
 const remoteURL = 'https://example.org/a.js';
 const code: ResolvedCode = {id: 'example', sha256: 'a'.repeat(64), actualSHA256: 'a'.repeat(64), execution: 'unsandboxed',
-    source: {type: 'remote', url: remoteURL}, capabilities: ['vm'], dependencies: [],
+    source: {type: 'remote-cacheable', url: remoteURL}, capabilities: ['vm'], dependencies: [],
     code: '/* example */', byteLength: 13, cached: false};
 /** The policy ports are typed for a host that always answers; these tests also try an absent mode. */
 const asMode = (mode: string | undefined) => mode as string;
@@ -15,7 +15,7 @@ test('session reuse binds digest, ID, source, capabilities and claimed publisher
     assert.deepEqual(await provider.authorize(code), {allowed: true, scope: 'digest', sha256: code.sha256});
     await provider.authorize({...code});
     assert.equal(prompts, 1);
-    for (const change of [{id: 'other'}, {source: {type: 'remote', url: 'https://elsewhere.org/a.js'}} as const,
+    for (const change of [{id: 'other'}, {source: {type: 'remote-cacheable', url: 'https://elsewhere.org/a.js'}} as const,
         {sha256: 'b'.repeat(64), actualSHA256: 'b'.repeat(64)}, {capabilities: ['network']}, {publisher: 'Someone'}]) {
         await provider.authorize({...code, ...change});
     }
@@ -77,7 +77,7 @@ test('custom sandbox mode refuses privilege escalation before prompting', async 
 test('URL-only custom host policies cannot implicitly authorize embedded code', async () => {
     const provider = createSessionTrustProvider({requestApproval: async () => { throw new Error('must not prompt'); },
         hostPolicy: {canLoadExtensionFromProject: async () => true, getSandboxMode: async () => 'unsandboxed'}});
-    assert.deepEqual(await provider.authorize({...code, source: {type: 'embedded', path: 'extensions/example.js'}}), {allowed: false});
+    assert.deepEqual(await provider.authorize({...code, source: {type: 'embedded-file', path: 'extensions/example.js'}}), {allowed: false});
 });
 
 test('sandboxed approvals stay separate and match the host sandbox policy without mode escalation', async () => {

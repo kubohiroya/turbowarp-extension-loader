@@ -12,7 +12,7 @@ npm install @kubohiroya/turbowarp-extension-loader
 
 - A schema v1 Manifest lives in `turboWarpPlus`, a non-standard field of `project.json`. This is not part of the standard SB3 specification.
 - Strict Manifest validation: unknown fields rejected, duplicate and standard extension IDs rejected, dependency ordering enforced, cyclic and missing dependencies rejected.
-- Per-extension Embedded / Remote / Cached resolution, a mandatory pinned SHA-256, UTF-8 validation, and per-code and total size limits.
+- Per-extension resolution in any of the four source forms, a mandatory pinned SHA-256, UTF-8 validation, and per-code and total size limits.
 - A SHA-256-keyed cache port. Every read re-verifies the exact bytes, and a cache hit still requires host authorization.
 - Registration starts only after explicit host authorization and only once every extension has been verified and authorized. A registration ID mismatch or a registration failure requires the host transaction to roll back.
 - Cancellation, fetch and authorization timeouts, a bounded retry of transient Remote failures, duplicate load rejection, unload, and diagnostic events.
@@ -21,17 +21,22 @@ Standard extensions, generic custom URLs and legacy Data URLs are not reinterpre
 
 ### Source forms
 
-A `source` names where one extension's bytes live, and takes one of three forms. Added in 0.2.0, `cached` names both locations at once, so a project keeps working offline without giving up a canonical published location.
+A `source` names where one extension's bytes live, as the author of the project decided. There are four forms, and they are the same four names the SB3 save format and the screen that offers the choice use, so nothing is translated between layers.
 
-| Form | Shape | Resolution order |
+| Form | Shape | Where the bytes come from |
 | --- | --- | --- |
-| `embedded` | `{type: 'embedded', path}` | the archive entry at `path` |
-| `remote` | `{type: 'remote', url}` | an HTTPS fetch of `url` |
-| `cached` | `{type: 'cached', url, path}` | the retained copy at `path`, then an HTTPS fetch of `url` |
+| `remote-non-cacheable` | `{type, url}` | an HTTPS fetch of `url`, every time |
+| `remote-cacheable` | `{type, url}` | the cache port, else an HTTPS fetch of `url` |
+| `embedded-file` | `{type, path, url?}` | the archive entry at `path`, else `url` |
+| `embedded-data` | `{type, url?}` | the `data:` carrier in the project document, else `url` |
 
-A retained copy is not a weaker source: the Manifest pins the SHA-256, so the copy either is exactly the pinned code or the load fails with `DIGEST_MISMATCH`. That is why it may be read before the network. When the entry is absent the loader reports a `retained-copy-unavailable` diagnostic and falls back to the URL, which must still serve the pinned bytes under the same redirect and final-URL policy as `remote`. `path` follows the same `extensions/*.js` policy as `embedded`, and the cache port still takes precedence over both locations.
+The two embedded forms are siblings: both make a project that runs offline, anywhere, on its own. They differ in the carrier, and the carrier decides who else can read it — `embedded-data` is what lets a standard TurboWarp host open the project without knowing this Manifest, because that host looks for a URL in the project document and the bytes are that URL.
 
-`cached` keeps `schemaVersion: 1`, so a Manifest that does not use it stays loadable by 0.1.0. A Manifest that does use it needs 0.2.0 or newer; older versions reject it with `INVALID_SOURCE` rather than loading it in a weaker form.
+A carried copy is not a weaker source: the Manifest pins the SHA-256, so the copy either is exactly the pinned code or the load fails with `DIGEST_MISMATCH`. When the carrier is missing the loader reports a `retained-copy-unavailable` diagnostic and falls back to `url` under the same redirect and final-URL policy as a reference. `path` follows the `extensions/*.js` policy.
+
+The cache is reached for `remote-cacheable` and for nothing else. An embedded project already carries the bytes, so a second copy in the browser buys nothing and the author never asked for one.
+
+The three spellings older versions used — `remote`, `cached` and `embedded` — are **refused**, each with a message naming what replaces it. The two that became a pair are not translated at all: the old name left the choice implicit and the reader is the one who has to make it.
 
 ## Host integration
 
@@ -71,7 +76,7 @@ The real VM adapter is owned by `scratch-gui/src/lib/tw-plus-extension-registrar
 - An injected fetch port must return `finalURL` and an explicitly empty `redirects`. The port itself is a boundary implemented by the trusted host, which is where retrying lives as well; see below.
 - Fetching and authorization time out even against a port that never responds. Registration waits for completion before rolling back, even after cancellation. To avoid a race between a late-completing registration and a rollback, a registration port that does not respond to `AbortSignal` cannot guarantee that an in-flight registration finishes in bounded time.
 - Cache capacity, invalidation, persistence and provenance logging belong to the host's port. A corrupted cache is never silently ignored in favour of switching to Remote.
-- `./packager` provides Embedded / Remote conversion, Data URL migration with explicit approval, lock and license metadata preservation, and offline SB3 preparation. An extension with external dependent resources is rejected rather than guessed into a bundle. Signature and publisher key pinning can be added by the host; the initial implementation is session approval bound to content and source.
+- `./packager` provides conversion between the source forms, Data URL migration with explicit approval, lock and license metadata preservation, and offline SB3 preparation. An extension with external dependent resources is rejected rather than guessed into a bundle. Signature and publisher key pinning can be added by the host; the initial implementation is session approval bound to content and source.
 - The ZIP implementation is injected through `createProjectIO({zip: JSZip})`. The core codec inspects the ZIP central directory directly and validates duplicates, paths and declared capacity before checking the real expanded size and CRC32 of the stream. An externally implemented archive port needs equivalent validation.
 
 The defaults are at most 64 extensions, 16 MiB per extension, 64 MiB in total, and 30 seconds for fetching and authorization. The per-extension and total defaults equal the project codec's per-entry and expansion limits, so any extension file a project can carry is also one the Loader reads; a host can lower them through its loader options. There is no development-mode exception for Data URLs or HTTP. Because standard TurboWarp and unsupported editors may discard the non-standard Manifest and ZIP entries, re-saving in a host without preservation support is not a migration path.
@@ -121,58 +126,129 @@ const loader = createExtensionLoader({...hostPorts, cache});
 - Fetching and storing new Remote bytes still requires a separate authorization every time. Dependent resources and external services fetched from inside the code are outside the scope of this cache.
 - The Web and Editor hosts should only initialize and inject this port, and should not implement separate cache logic in `scratch-gui` or `turbowarp-plus-editor`.
 
+### Whose bytes these are, and releasing them
+
+The cache is content-addressed: the key is the digest, so one extension that two projects both use
+is one copy, and no project can put the wrong bytes under a key it does not have the bytes for.
+That is why sharing is safe, and it is also why an entry does not belong to anyone. A second store
+records the claims, so a project's share can be listed and released without storing its bytes
+twice.
+
+```js
+const cache = createIndexedDBContentCache({appURI: manifest.uri, sharedDigests: catalogDigests});
+
+await cache.listBuckets();                 // every project that holds something, and how much
+await cache.listBucket(manifest.uri);      // what this one holds
+await cache.listBucket(SHARED_BUCKET);     // what belongs to no one project
+await cache.deleteBucket(manifest.uri);    // release it, and any bytes nothing else refers to
+```
+
+A catalog extension is pinned to a version and shared by many projects, so `sharedDigests` keeps it
+out of whichever project happened to fetch it first: that project would otherwise look responsible
+for storage every other one reuses, and releasing it would evict bytes the rest still want. The set
+is read at each write, so a host may keep filling it as its catalog loads. A host that cannot say
+which project it is opening files everything as shared, because guessing a name is worse than
+admitting there is none.
+
+Releasing a bucket drops its claims and reclaims only the bytes **nothing else refers to**. One
+copy referred to twice stays: the other project did not ask to lose it. An eviction takes the
+claims on it as well, so a bucket never lists bytes that are gone.
+
+Because there is no record of who put an entry there, releasing a project means releasing the
+digests **that project names** — which may evict bytes another project would have reused. That
+costs a fetch and nothing else, but a list shown to a person should not claim more than that.
+
 ## Where an extension's bytes come from
 
-The family settled on three ways to hold anything, extensions included.
+The family holds anything — extensions included — in one of four forms, and the author of the
+project decides which.
 
-| Way | Browser (IndexedDB) | Project (SB3) |
-| --- | --- | --- |
-| `remote` | nothing kept | reference only |
-| `cached` | verified bytes kept and reused | reference only |
-| `embedded` | not used | the project carries the bytes |
+| Form | Browser (IndexedDB) | Project (SB3) | Standard TurboWarp |
+| --- | --- | --- | --- |
+| `remote-non-cacheable` | nothing kept | reference only | cannot open it |
+| `remote-cacheable` | a verified copy may be kept | reference only | cannot open it |
+| `embedded-file` | not used | the project carries the bytes | cannot open it |
+| `embedded-data` | not used | the project carries the bytes | **can open it** |
 
-`embedded` has two forms: **`embedded-file`**, a file inside the archive, and **`embedded-data`**,
-a `data:` value inside the project document.
+### What the author decides, and what the opener may decline
 
-Only `remote` and `cached` are a choice at load time. `embedded` is the author's decision and is
-already in the manifest, so there is nothing left to ask. The other two are the opener's decision
-about their own browser, so they travel with neither the project nor the manifest:
+All four are the author's decision and are already in the manifest. What is left to ask at load
+time is narrower: whether the person opening the project keeps a copy of a `remote-cacheable`
+extension in **their own** browser. Storage is their device, so they can come in under what the
+author permitted — and only under it:
 
 ```js
 await loader.load(manifest, {
-    // Anything absent is cached, which is what every caller got before this option existed.
-    caching: new Map([['someextension', 'remote']])
+    // IDs this person will not keep a copy of. Leaving it out keeps what the author permitted.
+    declineCaching: new Set(['someextension'])
 });
 ```
 
-`remote` holds in both directions: the cache is not read for that extension and not written
+A set, not a map, because this can only ever refuse. `remote-non-cacheable` is a prohibition with
+no opposite to write: the author has reasons the opener cannot see — a kept copy hides a URL that
+stopped serving the pinned bytes until the copy runs out, and a work handed to a shared machine
+should leave no code behind. Declining is always safe; the worst it costs is a fetch. Naming
+anything else has no effect, since the other three forms reach the cache either way.
+
+Declining holds in both directions: the cache is not read for that extension and not written
 either, so a person who asked to leave nothing behind leaves nothing behind.
 
-### How a project says where it keeps an extension
+### Where a reference can still be reached from
 
-`source.type` has two values, matching the table: `embedded` for a project that carries the
-bytes, `remote` for one that carries only a reference. An embedded source may also record the
-URL the bytes came from:
+`url` on an embedded source records where the bytes came from:
 
 ```json
-{"type": "embedded", "path": "extensions/thing-<sha256>.js", "url": "https://example.test/thing.js"}
+{"type": "embedded-file", "path": "extensions/thing-<sha256>.js", "url": "https://example.test/thing.js"}
 ```
 
-That URL is what makes falling back possible when a retained copy is missing. Without it, a
-missing copy is the end of it.
+It does two things: it lets a missing carrier fall back to a fetch, and it is the only thing that
+keeps a path back to a reference form open. Without it the project can never be converted to
+`remote-cacheable` again, because there is nothing to point at.
 
-A manifest written before 0.4.0 spells that same thing `cached`. **It is refused**, with a
-message saying what it is now. This family does not promise to read what older versions wrote,
-and translating it silently would hide the change from whoever has to make it. A project saved
-by an older version has to be written again.
+`prepareCatalogExtensionChanges` takes `distribution` as one of the same four names. A catalog
+extension was fetched from an address, so both embedded forms keep that address beside the bytes
+rather than discarding what is already known, and the URL is checked against the pinned bytes
+whichever form it is stored in. A url is optional for the general case, where bytes nobody
+fetched — a costume, a sound, an extension written in the editor — have no address to record.
 
-`prepareCatalogExtensionChanges` takes `distribution: 'embedded' | 'remote'`, because where
-bytes are cached **in the browser** is the opener's decision and goes to `load()` instead.
-Either way the manifest records where the bytes came from: a catalog extension was fetched from
-an address, so embedding keeps that address beside the retained copy rather than discarding what
-is already known, and the URL is checked against the pinned bytes whichever form it is stored in.
-A url is optional on an embedded source for the general case, where bytes nobody fetched — a
-costume, a sound, an extension written in the editor — have no address to record.
+## What identifies one project
+
+A manifest may carry a `uri`: the address the project can be downloaded from, which is also what
+identifies it.
+
+```json
+{"schemaVersion": 1, "uri": "https://example.test/editor/turbowarp-plus-projects/66/66aa/0193f0a1-2b3c-7d4e-8f01-2233445566aa.sb3", "extensions": []}
+```
+
+One work, one URI, across every edit. That is why it is an address and not a fingerprint: a
+fingerprint changes on every save, so a browser cache and a record of what the opener chose would
+file one work under a new name each time it was touched. An address does not change when the bytes
+do.
+
+`createProjectUUID` and `defaultProjectURI` in `./project-authoring` build the address a project
+is given when its author has not chosen one:
+
+```js
+const uri = defaultProjectURI(location.origin + location.pathname, createProjectUUID());
+```
+
+The origin is the editor's own, never a host it does not serve from, because this address travels
+inside the SB3 when the work is handed on. The identifier is a UUID version 7, so it sorts by when
+the project was first saved, and the two directory levels are taken from its **end** — a version 7
+UUID begins with the top of a millisecond clock, which barely moves, so sharding on its first
+characters would put every project ever created in one directory.
+
+The address is deliberately opaque. A readable one would be derived from the title and would
+change when the title changed, filing one work under a second name; readability belongs to the
+deliberate act of publishing, where the author names the address themselves. A list meant for a
+person shows the project's title beside this.
+
+Nothing is served from the address until the author publishes there, and that is expected. **A URI
+that does not resolve says nothing**: a work saved but never published and a published work whose
+address rotted look exactly alike. Never decide anything by whether it resolves, least of all what
+to delete. The URI is also the project's own claim and is not verified — a work can name any
+address, including another's. What that can spoil is bookkeeping and nothing else, because the
+cache is keyed by digest and every hit is verified against it.
 
 ## Source and build
 
@@ -239,7 +315,7 @@ const candidate = await prepareExtensionAddition(currentSB3, {
 
 ## Bulk configuration from a catalog
 
-`prepareCatalogExtensionChanges(currentSB3, requests, ports, options)` in `./project-catalog` applies a catalog selection to an SB3 candidate in one pass. A request is `{id, url, distribution: 'embedded' | 'remote' | 'cached', execution: 'sandboxed' | 'unsandboxed', dependencies?, version?}`. JS fetching, SHA-256 computation, dependency ordering, verification of every entry and host approval all go through the shared Loader, and `{projectBytes, manifest}` is returned once every entry is approved. The real VM is untouched.
+`prepareCatalogExtensionChanges(currentSB3, requests, ports, options)` in `./project-catalog` applies a catalog selection to an SB3 candidate in one pass. A request is `{id, url, distribution: 'remote-non-cacheable' | 'remote-cacheable' | 'embedded-file' | 'embedded-data', execution: 'sandboxed' | 'unsandboxed', dependencies?, version?}`. JS fetching, SHA-256 computation, dependency ordering, verification of every entry and host approval all go through the shared Loader, and `{projectBytes, manifest}` is returned once every entry is approved. The real VM is untouched.
 
 When changing the distribution method or execution mode of an existing Plus extension, the verified code, SHA-256, publisher, version and lock are preserved. If the Remote destination does not return the current code, it is rejected rather than silently adopted as an update. `readProjectAuthoringState(input, options)` returns the verified Manifest and can be used to restore UI state. This project information is not an execution permission.
 
