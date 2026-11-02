@@ -22,6 +22,16 @@ export interface ExtensionAdditionOptions {
     signal?: AbortSignal;
     loaderOptions?: LoaderOptions;
     archiveOptions?: ArchiveLimits;
+    /**
+     * The address to give this project, or nothing to keep the one it has.
+     *
+     * Whether to assign one is the host's call, not this function's: only the host knows whether
+     * the author chose an address or whether this is a first save that needs a default. So this
+     * sets what it is given and leaves the existing address alone when it is given nothing —
+     * `readProjectAuthoringState` reports what a project already carries, so the host can tell
+     * the two apart before deciding.
+     */
+    uri?: string;
 }
 export interface PreparedExtensionAddition {
     readonly projectBytes: Uint8Array;
@@ -51,7 +61,7 @@ export function prepareExtensionAddition(input: unknown, request: ExtensionAddit
  * A host approval is required before the candidate is returned; the original is untouched.
  */
 export async function prepareExtensionAddition(input: unknown, request: unknown, ports: AuthoringPorts, {
-    zip: Zip, signal: externalSignal, loaderOptions = {}, archiveOptions
+    zip: Zip, signal: externalSignal, loaderOptions = {}, archiveOptions, uri
 }: Partial<ExtensionAdditionOptions> = {}): Promise<PreparedExtensionAddition> {
     if (typeof Zip !== 'function' || typeof Zip.loadAsync !== 'function') throw new TypeError('A compatible JSZip constructor is required');
     if (!plainObject(request) || Object.keys(request).some(key => !['id', 'source', 'bytes', 'execution'].includes(key))) {
@@ -109,8 +119,10 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         if (project.extensionURLs !== undefined && !plainObject(project.extensionURLs)) fail('INVALID_PROJECT', 'Project extensionURLs must be an object');
         const previous = prepared.manifest?.extensions || [];
         // Carried through every rebuild below: an address that changed when an extension was
-        // added would not be an address.
-        const carried = prepared.manifest?.uri === undefined ? {} : {uri: prepared.manifest.uri};
+        // added would not be an address. The host may set one, which is how a project gets its
+        // first; saying nothing keeps what is there.
+        const address = uri ?? prepared.manifest?.uri;
+        const carried = address === undefined ? {} : {uri: address};
         if (previous.some(spec => spec.id === draft.id) || (project.extensions || []).includes(draft.id) ||
             Object.hasOwn(project.extensionURLs || {}, draft.id)) fail('DUPLICATE_EXTENSION', 'This extension ID already belongs to the project', draft.id);
         validateManifest({schemaVersion: 1, ...carried, extensions: [...previous, draft]}, loaderOptions);

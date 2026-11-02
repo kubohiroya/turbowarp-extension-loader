@@ -320,3 +320,28 @@ test('a project keeps its own address through a change to its extensions', async
     // Reading the project back reports it, so a host can hand the same address in again.
     assert.equal((await readProjectAuthoringState(second.projectBytes, {zip: Zip}))!.uri, uri);
 });
+
+test('the host assigns a project its address, and saying nothing keeps the one it has', async () => {
+    const first = 'https://example.test/editor/turbowarp-plus-projects/66/66aa/0193f0a1-2b3c-7d4e-8f01-2233445566aa.sb3';
+    const published = 'https://example.test/works/my-kamishibai.sb3';
+    const add = (input: Uint8Array | Promise<Uint8Array>, uri?: string) => Promise.resolve(input).then(bytes =>
+        prepareCatalogExtensionChanges(bytes, [request('sample', {distribution: 'remote-cacheable'})],
+            host(), {zip: Zip, ...(uri === undefined ? {} : {uri})}));
+
+    // A first save: the project has no address, so the host's default is taken.
+    const assigned = await add(archive(project()), first);
+    assert.equal(assigned.manifest.uri, first);
+
+    // A later change says nothing about the address, so the project keeps it.
+    const kept = await add(assigned.projectBytes);
+    assert.equal(kept.manifest.uri, first);
+
+    // Saving to an address the author chose replaces it. That is a deliberate act — the host is
+    // the only one that can tell it apart from a first save, so this does what it is told.
+    const moved = await add(kept.projectBytes, published);
+    assert.equal(moved.manifest.uri, published);
+    assert.equal((await decode(moved)).json.turboWarpPlus.uri, published);
+
+    // The same rule as every other address this family records.
+    await assert.rejects(add(kept.projectBytes, 'http://example.test/a.sb3'), {code: 'INVALID_PROJECT_URI'});
+});

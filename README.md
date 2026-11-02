@@ -226,6 +226,13 @@ fingerprint changes on every save, so a browser cache and a record of what the o
 file one work under a new name each time it was touched. An address does not change when the bytes
 do.
 
+`prepareCatalogExtensionChanges` and `prepareExtensionAddition` take a `uri` option, which is how
+a project gets its first address and how it moves to one the author chose. Saying nothing keeps
+the address the project already has, and `readProjectAuthoringState` reports that address, so a
+host can tell a first save from a later one before deciding. Whether to assign one is the host's
+call: only the host knows whether the author chose an address or whether this is a first save
+that needs a default.
+
 `createProjectUUID` and `defaultProjectURI` in `./project-authoring` build the address a project
 is given when its author has not chosen one:
 

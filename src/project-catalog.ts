@@ -28,6 +28,16 @@ export interface CatalogOptions {
     signal?: AbortSignal;
     loaderOptions?: LoaderOptions;
     archiveOptions?: ArchiveLimits;
+    /**
+     * The address to give this project, or nothing to keep the one it has.
+     *
+     * Whether to assign one is the host's call, not this function's: only the host knows whether
+     * the author chose an address or whether this is a first save that needs a default. So this
+     * sets what it is given and leaves the existing address alone when it is given nothing —
+     * `readProjectAuthoringState` reports what a project already carries, so the host can tell
+     * the two apart before deciding.
+     */
+    uri?: string;
 }
 export type CatalogPorts = Pick<LoaderPorts, 'fetcher' | 'trustProvider' | 'cache' | 'diagnostics'>;
 
@@ -55,7 +65,7 @@ export async function readProjectAuthoringState(input: unknown, {zip, signal, ar
 export function prepareCatalogExtensionChanges(input: unknown, requests: CatalogExtensionRequest[],
     ports: CatalogPorts, options: CatalogOptions): Promise<Readonly<{projectBytes: Uint8Array; manifest: Manifest}>>;
 export async function prepareCatalogExtensionChanges(input: unknown, requests: CatalogExtensionRequest[], ports: CatalogPorts, {
-    zip: Zip, signal: externalSignal, loaderOptions = {}, archiveOptions
+    zip: Zip, signal: externalSignal, loaderOptions = {}, archiveOptions, uri
 }: Partial<CatalogOptions> = {}): Promise<Readonly<{projectBytes: Uint8Array; manifest: Manifest}>> {
     const limits = {...DEFAULT_LOADER_LIMITS, ...loaderOptions};
     for (const key of ['maxExtensions', 'maxBytes', 'maxTotalBytes', 'timeoutMs'] as const) {
@@ -191,8 +201,10 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
         // The project's own address survives a change to its extensions. Rebuilding the manifest
         // without it would file the same work under a new name the next time it was saved, which
         // is the one thing an address is for.
-        const manifest = validateManifest({schemaVersion: 1, ...(prepared.manifest?.uri === undefined ?
-            {} : {uri: prepared.manifest.uri}), extensions: [...extensions.values()]}, loaderOptions);
+        const address = uri ?? prepared.manifest?.uri;
+        const manifest = validateManifest({schemaVersion: 1,
+            ...(address === undefined ? {} : {uri: address}),
+            extensions: [...extensions.values()]}, loaderOptions);
         for (const spec of manifest.extensions) if (spec.source.type === 'embedded-file') replacedPaths.delete(spec.source.path);
         for (const path of replacedPaths) delete files[path];
         project.turboWarpPlus = manifest;
