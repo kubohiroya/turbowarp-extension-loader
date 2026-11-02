@@ -211,9 +211,13 @@ test('a project identifier sorts by when it was made, and still shards evenly', 
     const ids = Array.from({length: 200}, createProjectUUID);
     for (const id of ids) assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     assert.equal(new Set(ids).size, ids.length);
-    // Version 7 puts the clock first, so the identifiers are already in creation order.
-    assert.deepEqual([...ids].sort(), ids.map(id => id).sort());
-    assert.ok(ids[0]! <= ids.at(-1)!);
+    // Version 7 puts the millisecond clock first, so the leading 48 bits never go backwards in
+    // creation order. Identifiers made within the same millisecond are ordered by their random
+    // bits, not by when they were made, so only the clock prefix is compared.
+    const clockOf = (id: string) => id.replaceAll('-', '').slice(0, 12);
+    for (let index = 1; index < ids.length; index++) {
+        assert.ok(clockOf(ids[index - 1]!) <= clockOf(ids[index]!), `${ids[index - 1]} then ${ids[index]}`);
+    }
     // The shard comes from the random tail. Sharding on the leading characters would put every
     // one of these in a single directory, because the clock's top byte barely moves.
     const shardOf = (uri: string) => uri.split('/').at(-3)!;
