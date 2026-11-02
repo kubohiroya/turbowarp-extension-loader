@@ -17,8 +17,8 @@ const code = '﻿globalThis.__authoringExecuted = true;\nScratch.extensions.regi
 const bytes = new TextEncoder().encode(code);
 const sha256 = createHash('sha256').update(bytes).digest('hex');
 const url = 'https://example.test/sample.js';
-const embedded = (id = 'sample', content: Uint8Array | Blob = bytes) => ({id, source: {type: 'embedded' as const}, bytes: content});
-const remote = (id = 'sample', target = url) => ({id, source: {type: 'remote' as const, url: target}});
+const embedded = (id = 'sample', content: Uint8Array | Blob = bytes) => ({id, source: {type: 'embedded-file' as const}, bytes: content});
+const remote = (id = 'sample', target = url) => ({id, source: {type: 'remote-cacheable' as const, url: target}});
 /** Tests add IDs, legacy URLs and a prior lock, so the project fixture stays wider than one save. */
 interface ProjectFixture {
     targets: unknown[];
@@ -52,7 +52,7 @@ async function jsonOf(result: {projectBytes: Uint8Array}) {
     return {zip, json: JSON.parse(await zip.file('project.json')!.async('string'))};
 }
 const embeddedPath = (source: ExtensionSource) => {
-    assert.ok(source.type === 'embedded');
+    assert.ok(source.type === 'embedded-file');
     return source.path;
 };
 
@@ -85,13 +85,13 @@ test('Remote addition fetches once, computes the pin and remains Remote until of
     const result = await prepareExtensionAddition(await archive(), remote(), host, {zip: Zip});
     assert.deepEqual(host.fetches, [url]);
     assert.equal(result.spec.sha256, sha256);
-    assert.deepEqual(result.spec.source, {type: 'remote', url});
+    assert.deepEqual(result.spec.source, {type: 'remote-cacheable', url});
     const {zip} = await jsonOf(result);
     assert.equal(zip.file('extensions/sample.js'), null);
     assert.equal(host.reviews.length, 1);
     const offline = await prepareOfflinePackage(result.projectBytes, host, {zip: Zip, resourceDependencies: {sample: []}});
     assert.equal(offline.offline, true);
-    assert.equal(offline.manifest.extensions[0].source.type, 'embedded');
+    assert.equal(offline.manifest.extensions[0].source.type, 'embedded-file');
     const bundled = await Zip.loadAsync(offline.projectBytes);
     assert.deepEqual(await bundled.file(embeddedPath(offline.manifest.extensions[0].source))!.async('uint8array'), bytes);
     assert.equal(host.reviews.length, 1, 'host session approval is reused for the same exact source and bytes');
@@ -133,7 +133,7 @@ test('reserved, existing, legacy URL and existing Plus IDs are rejected before f
 test('unsafe URLs, byte-supplied Remote sources and archive path collisions fail before fetch', async () => {
     const host = ports();
     for (const source of ['http://example.test/code.js', 'https://user:password@example.test/code.js', `${url}#fragment`]) {
-        await assert.rejects(prepareExtensionAddition(project(), {id: 'sample', source: {type: 'remote', url: source}}, host, {zip: Zip}), {code: 'INVALID_SOURCE'});
+        await assert.rejects(prepareExtensionAddition(project(), {id: 'sample', source: {type: 'remote-cacheable', url: source}}, host, {zip: Zip}), {code: 'INVALID_SOURCE'});
     }
     // Supplying bytes for a Remote source is exactly what the API must refuse, so the types forbid it too.
     await assert.rejects(prepareExtensionAddition(project(), {...remote(), bytes} as unknown as ExtensionAdditionRequest, host, {zip: Zip}), {code: 'INVALID_ADDITION'});
@@ -199,7 +199,7 @@ test('oversized Blob is rejected without reading it, and total byte limits inclu
 
 test('malformed archive and unsafe path fail without approval or fetch', async () => {
     const host = ports();
-    const unsafe = {...embedded(), source: {type: 'embedded' as const, path: 'extensions/../code.js'}};
+    const unsafe = {...embedded(), source: {type: 'embedded-file' as const, path: 'extensions/../code.js'}};
     await assert.rejects(prepareExtensionAddition(project(), unsafe, host, {zip: Zip}), {code: 'INVALID_SOURCE'});
     await assert.rejects(prepareExtensionAddition(new Uint8Array([0x50, 0x4b, 1, 2]), remote(), host, {zip: Zip}), {code: 'INVALID_ARCHIVE'});
     assert.deepEqual(host.fetches, []);
