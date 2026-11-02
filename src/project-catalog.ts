@@ -141,8 +141,10 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
             const sha256 = await wait(() => digest(bytes));
             if (old && old.sha256 !== sha256) fail('CONVERSION_INTEGRITY', 'Source conversion changed bytes', choice.id);
             const retainedPath = `extensions/${choice.id}-${sha256}.js`;
-            // Embedding keeps where the bytes came from. Dropping it would throw away the only
-            // thing that lets a project recover when its retained copy is lost.
+            // A catalog extension was fetched from an address, so embedding keeps that address
+            // beside the copy rather than discarding what is already known. Bytes nobody fetched —
+            // a costume, a sound, an extension written here — have no address to record, which is
+            // why a url is optional on an embedded source.
             const source: ExtensionSource = choice.distribution === 'embedded' ?
                 {type: 'embedded', path: retainedPath, url: (choice.source as {url: string}).url} :
                 choice.source;

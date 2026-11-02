@@ -168,9 +168,11 @@ by an older version has to be written again.
 
 `prepareCatalogExtensionChanges` takes `distribution: 'embedded' | 'remote'`, because where
 bytes are cached **in the browser** is the opener's decision and goes to `load()` instead.
-Either way the manifest records where the bytes came from: embedding keeps the URL beside the
-retained copy, so a project can still recover if that copy is lost, and the URL is checked
-against the pinned bytes whichever form it is stored in.
+Either way the manifest records where the bytes came from: a catalog extension was fetched from
+an address, so embedding keeps that address beside the retained copy rather than discarding what
+is already known, and the URL is checked against the pinned bytes whichever form it is stored in.
+A url is optional on an embedded source for the general case, where bytes nobody fetched — a
+costume, a sound, an extension written in the editor — have no address to record.
 
 ## Source and build
 
