@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.7.0
+
+Released on 2026-11-03. A classifier a host needs before offering "try again" after a failed
+operation, and the attempt total in retry reports. Both are additions: no error code, message or
+default changes, so a host on 0.6.0 needs nothing but the version bump to keep working.
+
 - `isWorthAskingAgain(error)` answers, for the rejection of a whole `load()`, `./project-catalog` or
   `./project-authoring` operation, whether asking again could answer differently — the question a
   host has before offering "try again". Unlike `isTransientFetchFailure`, which judges one transfer
