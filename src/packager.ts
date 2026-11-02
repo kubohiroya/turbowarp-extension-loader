@@ -109,7 +109,10 @@ export async function convertProjectSources(input: unknown, ports: PackagingPort
                 (Array.isArray(previousLock?.extensions) ? previousLock.extensions : []).find(entry => entry && entry.id === record.id && entry.sha256 === record.sha256)?.metadata}, record.id)}));
     }
     for (const id of Object.keys(targets)) if (!records.some(record => record.id === id)) fail('UNKNOWN_EXTENSION', `Unknown conversion target ${id}`);
-    const manifest = validateManifest({schemaVersion: 1, extensions});
+    // The project keeps its address through a conversion: it is the same work, served from the
+    // same place, however its extensions are now held.
+    const manifest = validateManifest({schemaVersion: 1,
+        ...(prepared.manifest.uri === undefined ? {} : {uri: prepared.manifest.uri}), extensions});
     const lock: PackageLock = Object.freeze({schemaVersion: 1, previousLock: project.turboWarpPlusLock ?? null, extensions: Object.freeze(lockEntries)});
     project.turboWarpPlus = manifest;
     project.turboWarpPlusLock = lock;

@@ -297,3 +297,26 @@ test('a recorded URL is checked against the pinned bytes even when a copy is ret
     await assert.rejects(prepareCatalogExtensionChanges(initial.projectBytes,
         [request('sample', {distribution: 'embedded-file'})], ports, {zip: Zip}), {code: 'DIGEST_MISMATCH'});
 });
+
+test('a project keeps its own address through a change to its extensions', async () => {
+    const uri = 'https://example.test/editor/turbowarp-plus-projects/66/66aa/0193f0a1-2b3c-7d4e-8f01-2233445566aa.sb3';
+    const first = await prepareCatalogExtensionChanges(await archive(project()),
+        [request('sample', {distribution: 'remote-cacheable'})], host(), {zip: Zip});
+    // A project with no manifest yet has no address either; the host assigns one on the way in.
+    assert.equal(first.manifest.uri, undefined);
+    const {json} = await decode(first);
+    json.turboWarpPlus.uri = uri;
+
+    // Adding a second extension rebuilds the manifest. The address has to survive that, or the
+    // same work would be filed under a new name the next time it was saved — and being stable
+    // across edits is the whole reason it is an address and not a fingerprint.
+    const second = await prepareCatalogExtensionChanges(await archive(json),
+        [request('sample', {distribution: 'remote-cacheable'}), request('other', {distribution: 'remote-cacheable'})],
+        host(), {zip: Zip});
+    assert.equal(second.manifest.uri, uri);
+    assert.equal((await decode(second)).json.turboWarpPlus.uri, uri);
+    assert.deepEqual(second.manifest.extensions.map(spec => spec.id), ['sample', 'other']);
+
+    // Reading the project back reports it, so a host can hand the same address in again.
+    assert.equal((await readProjectAuthoringState(second.projectBytes, {zip: Zip}))!.uri, uri);
+});

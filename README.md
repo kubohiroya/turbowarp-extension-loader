@@ -220,7 +220,8 @@ identifies it.
 {"schemaVersion": 1, "uri": "https://example.test/editor/turbowarp-plus-projects/66/66aa/0193f0a1-2b3c-7d4e-8f01-2233445566aa.sb3", "extensions": []}
 ```
 
-One work, one URI, across every edit. That is why it is an address and not a fingerprint: a
+One work, one URI, across every edit — including the edits that change its extensions, which
+rebuild the manifest around it. That is why it is an address and not a fingerprint: a
 fingerprint changes on every save, so a browser cache and a record of what the opener chose would
 file one work under a new name each time it was touched. An address does not change when the bytes
 do.
