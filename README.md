@@ -126,6 +126,38 @@ const loader = createExtensionLoader({...hostPorts, cache});
 - Fetching and storing new Remote bytes still requires a separate authorization every time. Dependent resources and external services fetched from inside the code are outside the scope of this cache.
 - The Web and Editor hosts should only initialize and inject this port, and should not implement separate cache logic in `scratch-gui` or `turbowarp-plus-editor`.
 
+### Whose bytes these are, and releasing them
+
+The cache is content-addressed: the key is the digest, so one extension that two projects both use
+is one copy, and no project can put the wrong bytes under a key it does not have the bytes for.
+That is why sharing is safe, and it is also why an entry does not belong to anyone. A second store
+records the claims, so a project's share can be listed and released without storing its bytes
+twice.
+
+```js
+const cache = createIndexedDBContentCache({appURI: manifest.uri, sharedDigests: catalogDigests});
+
+await cache.listBuckets();                 // every project that holds something, and how much
+await cache.listBucket(manifest.uri);      // what this one holds
+await cache.listBucket(SHARED_BUCKET);     // what belongs to no one project
+await cache.deleteBucket(manifest.uri);    // release it, and any bytes nothing else refers to
+```
+
+A catalog extension is pinned to a version and shared by many projects, so `sharedDigests` keeps it
+out of whichever project happened to fetch it first: that project would otherwise look responsible
+for storage every other one reuses, and releasing it would evict bytes the rest still want. The set
+is read at each write, so a host may keep filling it as its catalog loads. A host that cannot say
+which project it is opening files everything as shared, because guessing a name is worse than
+admitting there is none.
+
+Releasing a bucket drops its claims and reclaims only the bytes **nothing else refers to**. One
+copy referred to twice stays: the other project did not ask to lose it. An eviction takes the
+claims on it as well, so a bucket never lists bytes that are gone.
+
+Because there is no record of who put an entry there, releasing a project means releasing the
+digests **that project names** — which may evict bytes another project would have reused. That
+costs a fetch and nothing else, but a list shown to a person should not claim more than that.
+
 ## Where an extension's bytes come from
 
 The family holds anything — extensions included — in one of four forms, and the author of the
@@ -283,7 +315,7 @@ const candidate = await prepareExtensionAddition(currentSB3, {
 
 ## Bulk configuration from a catalog
 
-`prepareCatalogExtensionChanges(currentSB3, requests, ports, options)` in `./project-catalog` applies a catalog selection to an SB3 candidate in one pass. A request is `{id, url, distribution: 'embedded' | 'remote' | 'cached', execution: 'sandboxed' | 'unsandboxed', dependencies?, version?}`. JS fetching, SHA-256 computation, dependency ordering, verification of every entry and host approval all go through the shared Loader, and `{projectBytes, manifest}` is returned once every entry is approved. The real VM is untouched.
+`prepareCatalogExtensionChanges(currentSB3, requests, ports, options)` in `./project-catalog` applies a catalog selection to an SB3 candidate in one pass. A request is `{id, url, distribution: 'remote-non-cacheable' | 'remote-cacheable' | 'embedded-file' | 'embedded-data', execution: 'sandboxed' | 'unsandboxed', dependencies?, version?}`. JS fetching, SHA-256 computation, dependency ordering, verification of every entry and host approval all go through the shared Loader, and `{projectBytes, manifest}` is returned once every entry is approved. The real VM is untouched.
 
 When changing the distribution method or execution mode of an existing Plus extension, the verified code, SHA-256, publisher, version and lock are preserved. If the Remote destination does not return the current code, it is rejected rather than silently adopted as an update. `readProjectAuthoringState(input, options)` returns the verified Manifest and can be used to restore UI state. This project information is not an execution permission.
 
