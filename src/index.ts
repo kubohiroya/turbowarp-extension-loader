@@ -59,7 +59,23 @@ export interface ExtensionSpec {
     readonly capabilities: readonly string[];
     readonly dependencies: readonly string[];
 }
-export interface Manifest {readonly schemaVersion: 1; readonly extensions: readonly ExtensionSpec[]}
+export interface Manifest {
+    readonly schemaVersion: 1;
+    /**
+     * The address this project can be downloaded from, which is also what identifies it.
+     *
+     * One work, one URI, across every edit: it is what the browser's caches and the opener's
+     * recorded decisions are filed under, so a fingerprint would not do — that changes on every
+     * save and would file one work under a new name each time. An address does not.
+     *
+     * It is the project's own claim and is not verified. Nothing is served from it until the
+     * author actually publishes there, so a URI that does not resolve says nothing: a work saved
+     * but never published and a published work whose address rotted look exactly alike. Never
+     * decide anything, least of all what to delete, by whether it resolves.
+     */
+    readonly uri?: string;
+    readonly extensions: readonly ExtensionSpec[];
+}
 export interface ResolvedCode extends ExtensionSpec {
     readonly code: string;
     readonly byteLength: number;
@@ -170,12 +186,18 @@ const string = (value: unknown, label: string, max = 256): string => {
     return value;
 };
 
-function remoteURL(value: string): string {
+// One rule for every address this family records. The code says which address was wrong, since
+// a project's own URI is not one of its sources and should not be reported as one.
+function address(value: unknown, code: string, what: string): string {
     let url: URL;
-    try { url = new URL(value); } catch { fail('INVALID_SOURCE', 'Remote source must be an absolute HTTPS URL'); }
-    if (url.protocol !== 'https:' || url.username || url.password || url.hash) fail('INVALID_SOURCE', 'Remote source requires HTTPS without credentials or fragment');
+    // Reported under the caller's code throughout, including a value that is not a string at
+    // all, so one wrong address is one error a reader can place.
+    if (typeof value !== 'string' || value.length > 4096) fail(code, `${what} must be an absolute HTTPS URL`);
+    try { url = new URL(value); } catch { fail(code, `${what} must be an absolute HTTPS URL`); }
+    if (url.protocol !== 'https:' || url.username || url.password || url.hash) fail(code, `${what} requires HTTPS without credentials or fragment`);
     return url.href;
 }
+const remoteURL = (value: string): string => address(value, 'INVALID_SOURCE', 'Remote source');
 
 function embeddedPath(value: unknown): string {
     const path = string(value, 'embedded path', 256);
@@ -212,8 +234,10 @@ function sourceOf(source: unknown): ExtensionSource {
 
 /** Validate and snapshot untrusted data; execution is only a request. */
 export function validateManifest(input: unknown, options: Pick<LoaderOptions, 'maxExtensions'> = {}): Manifest {
-    keys(input, ['schemaVersion', 'extensions'], 'manifest');
+    keys(input, ['schemaVersion', 'uri', 'extensions'], 'manifest');
     if (input.schemaVersion !== 1) fail('UNSUPPORTED_SCHEMA', 'Only schemaVersion 1 is supported');
+    // The same rule as every other address this family records, so there is one to learn.
+    const uri = input.uri === undefined ? undefined : address(input.uri, 'INVALID_PROJECT_URI', 'A project URI');
     const maxExtensions = options.maxExtensions ?? DEFAULTS.maxExtensions;
     if (!Array.isArray(input.extensions) || input.extensions.length > maxExtensions) fail('INVALID_MANIFEST', 'Invalid extension list');
     const ids = new Set<string>();
@@ -250,7 +274,8 @@ export function validateManifest(input: unknown, options: Pick<LoaderOptions, 'm
         ordered.push(spec);
     };
     extensions.forEach(visit);
-    return Object.freeze({schemaVersion: 1, extensions: Object.freeze(ordered)});
+    return Object.freeze({schemaVersion: 1, ...(uri === undefined ? {} : {uri}),
+        extensions: Object.freeze(ordered)});
 }
 
 export function discoverManifest(project: unknown, options?: Pick<LoaderOptions, 'maxExtensions'>): Manifest | null {
