@@ -5,11 +5,11 @@ import {createHash} from 'node:crypto';
 
 const bytes = new TextEncoder().encode('Scratch.extensions.register({});');
 const sha256 = createHash('sha256').update(bytes).digest('hex');
-const manifest = (ids: string[]) => ({
+const manifest = (ids: string[], type: 'remote-cacheable' | 'remote-non-cacheable' = 'remote-cacheable') => ({
     schemaVersion: 1,
     extensions: ids.map(id => ({
         id, execution: 'sandboxed' as const, sha256,
-        source: {type: 'remote' as const, url: `https://example.test/${id}.js`}
+        source: {type, url: `https://example.test/${id}.js`}
     }))
 });
 
@@ -51,7 +51,7 @@ function ports() {
     };
 }
 
-test('an extension left to itself is cached, as every caller got before this existed', async () => {
+test('a cacheable source left alone is kept, which is what the author permitted', async () => {
     const p = ports();
     const loader = createExtensionLoader(p);
     await loader.load(manifest(['a']));
@@ -60,10 +60,22 @@ test('an extension left to itself is cached, as every caller got before this exi
     await loader.unload();
 });
 
-test('remote neither reads nor writes the cache: nothing is left in this browser', async () => {
+test('a non-cacheable source is never kept, and there is no way to ask for it to be', async () => {
     const p = ports();
     const loader = createExtensionLoader(p);
-    await loader.load(manifest(['a']), {caching: new Map([['a', 'remote']])});
+    // The author forbade a copy. declineCaching can only refuse, so naming it here or leaving it
+    // out comes to the same thing — the prohibition has no opposite to write.
+    await loader.load(manifest(['a'], 'remote-non-cacheable'), {declineCaching: new Set(['a'])});
+    assert.deepEqual(p.reads, []);
+    assert.deepEqual(p.writes, []);
+    assert.deepEqual(p.fetched, ['https://example.test/a.js']);
+    await loader.unload();
+});
+
+test('declining a cacheable source neither reads nor writes the cache', async () => {
+    const p = ports();
+    const loader = createExtensionLoader(p);
+    await loader.load(manifest(['a']), {declineCaching: new Set(['a'])});
     assert.deepEqual(p.reads, []);
     assert.deepEqual(p.writes, []);
     assert.deepEqual(p.fetched, ['https://example.test/a.js']);
@@ -73,14 +85,14 @@ test('remote neither reads nor writes the cache: nothing is left in this browser
 test('the choice is made for each extension, not for the project', async () => {
     const p = ports();
     const loader = createExtensionLoader(p);
-    await loader.load(manifest(['keep', 'pass']), {caching: new Map([['pass', 'remote']])});
+    await loader.load(manifest(['keep', 'pass']), {declineCaching: new Set(['pass'])});
     assert.deepEqual(p.reads, [sha256]);
     assert.deepEqual(p.writes, [sha256]);
     assert.deepEqual(p.fetched.length, 2);
     await loader.unload();
 });
 
-test('a remote extension is fetched again even when the cache already holds those bytes', async () => {
+test('a declined extension is fetched again even when the cache already holds those bytes', async () => {
     const p = ports();
     const first = createExtensionLoader(p);
     await first.load(manifest(['a']));
@@ -90,7 +102,7 @@ test('a remote extension is fetched again even when the cache already holds thos
     const second = createExtensionLoader(p);
     p.fetched.length = 0;
     p.reads.length = 0;
-    await second.load(manifest(['a']), {caching: new Map([['a', 'remote']])});
+    await second.load(manifest(['a']), {declineCaching: new Set(['a'])});
     // The bytes are in the browser, but this person asked not to use what is kept.
     assert.deepEqual(p.reads, []);
     assert.deepEqual(p.fetched, ['https://example.test/a.js']);

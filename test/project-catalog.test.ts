@@ -17,7 +17,7 @@ const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('h
 const url = (id: string) => `https://catalog.test/${id}.js`;
 /** Requests are also built with values the public types reject, which is what those cases verify. */
 const request = (id: string, changes: Record<string, unknown> = {}) =>
-    ({id, url: url(id), distribution: 'remote', execution: 'unsandboxed', ...changes}) as CatalogExtensionRequest;
+    ({id, url: url(id), distribution: 'remote-cacheable', execution: 'unsandboxed', ...changes}) as CatalogExtensionRequest;
 /** Tests add a saved Manifest, a lock and legacy URLs, so the fixture stays wider than one save. */
 interface ProjectFixture {
     targets: unknown[];
@@ -61,14 +61,14 @@ function host({allow = () => true, sources = new Map<string, Uint8Array>()}:
     };
 }
 const embeddedPath = (source: ExtensionSource) => {
-    assert.ok(source.type === 'embedded');
+    assert.ok(source.type === 'embedded-file');
     return source.path;
 };
 /** A port that omits redirects or stalls is itself a rejected contract, so stubs are cast in deliberately. */
 const stubFetch = (implementation: () => unknown) => implementation as unknown as FetchPort['fetch'];
 
 for (const execution of ['sandboxed', 'unsandboxed'] as const) {
-    for (const distribution of ['embedded', 'remote'] as const) {
+    for (const distribution of ['embedded-file', 'embedded-data', 'remote-cacheable', 'remote-non-cacheable'] as const) {
         test(`catalog ${execution}/${distribution} calculates SHA-256 and preserves plain SB3 assets without evaluation`, async () => {
             const id = 'sample';
             const input = await archive(project(), {'image.svg': '<svg/>', 'unknown/data.bin': new Uint8Array([1, 2, 3])});
@@ -93,8 +93,14 @@ for (const execution of ['sandboxed', 'unsandboxed'] as const) {
             assert.deepEqual(json.extensions, ['pen', id]);
             assert.equal(await zip.file('image.svg')!.async('string'), '<svg/>');
             assert.deepEqual(await zip.file('unknown/data.bin')!.async('uint8array'), new Uint8Array([1, 2, 3]));
-            if (distribution === 'embedded') assert.deepEqual(await zip.file(embeddedPath(spec.source))!.async('uint8array'), content(id));
-            else assert.deepEqual(spec.source, {type: 'remote', url: url(id)});
+            if (distribution === 'embedded-file') {
+                assert.deepEqual(await zip.file(embeddedPath(spec.source))!.async('uint8array'), content(id));
+            } else if (distribution === 'embedded-data') {
+                assert.deepEqual(spec.source, {type: 'embedded-data', url: url(id)});
+                // The carrier a standard host reads: the bytes are the address, under this ID.
+                assert.equal(json.extensionURLs![id],
+                    `data:text/javascript;base64,${Buffer.from(content(id)).toString('base64')}`);
+            } else assert.deepEqual(spec.source, {type: distribution, url: url(id)});
         });
     }
 }
@@ -110,17 +116,17 @@ test('a second-entry denial does not change the input or execute either catalog 
 });
 
 test('existing Embedded/Remote conversions retain SHA and exact BOM bytes while execution can change explicitly', async () => {
-    const initial = await prepareCatalogExtensionChanges(await archive(), [request('sample', {distribution: 'embedded'})], host(), {zip: Zip});
+    const initial = await prepareCatalogExtensionChanges(await archive(), [request('sample', {distribution: 'embedded-file'})], host(), {zip: Zip});
     const original = initial.projectBytes.slice();
     const remotePorts = host();
     const remote = await prepareCatalogExtensionChanges(initial.projectBytes,
-        [request('sample', {distribution: 'remote', execution: 'sandboxed'})], remotePorts, {zip: Zip});
+        [request('sample', {distribution: 'remote-cacheable', execution: 'sandboxed'})], remotePorts, {zip: Zip});
     assert.equal(remote.manifest.extensions[0].sha256, initial.manifest.extensions[0].sha256);
     assert.equal(remote.manifest.extensions[0].execution, 'sandboxed');
     assert.deepEqual(remotePorts.fetches, [url('sample')]);
     assert.deepEqual(initial.projectBytes, original);
     const embedded = await prepareCatalogExtensionChanges(remote.projectBytes,
-        [request('sample', {distribution: 'embedded', execution: 'sandboxed'})], host(), {zip: Zip});
+        [request('sample', {distribution: 'embedded-file', execution: 'sandboxed'})], host(), {zip: Zip});
     const spec = embedded.manifest.extensions[0];
     assert.equal(spec.sha256, hash(content('sample')));
     const {zip} = await decode(embedded);
@@ -133,18 +139,18 @@ test('switching distribution releases the copy the replaced entry kept', async (
         Object.keys((await decode(result)).zip.files).filter(name => name.startsWith('extensions/'));
     const copy = `extensions/sample-${hash(content('sample'))}.js`;
     const kept = await prepareCatalogExtensionChanges(await archive(project(), {'extensions/other.js': 'kept'}),
-        [request('sample', {distribution: 'embedded'})], host(), {zip: Zip});
+        [request('sample', {distribution: 'embedded-file'})], host(), {zip: Zip});
     assert.deepEqual((await names(kept)).sort(), ['extensions/other.js', copy]);
     const remote = await prepareCatalogExtensionChanges(kept.projectBytes, [request('sample')], host(), {zip: Zip});
     assert.deepEqual(await names(remote), ['extensions/other.js'], 'the retained copy is gone, unrelated entries stay');
     // Embedded again reuses the same path, so the copy must survive its own release.
     const again = await prepareCatalogExtensionChanges(kept.projectBytes,
-        [request('sample', {distribution: 'embedded'})], host(), {zip: Zip});
+        [request('sample', {distribution: 'embedded-file'})], host(), {zip: Zip});
     assert.deepEqual((await names(again)).sort(), ['extensions/other.js', copy]);
 });
 
 test('Embedded to Remote refuses changed server content before requesting new host approval', async () => {
-    const initial = await prepareCatalogExtensionChanges(await archive(), [request('sample', {distribution: 'embedded'})], host(), {zip: Zip});
+    const initial = await prepareCatalogExtensionChanges(await archive(), [request('sample', {distribution: 'embedded-file'})], host(), {zip: Zip});
     const original = initial.projectBytes.slice();
     const ports = host({sources: new Map([[url('sample'), encoder.encode('different code')]])});
     await assert.rejects(prepareCatalogExtensionChanges(initial.projectBytes, [request('sample')], ports, {zip: Zip}), {code: 'DIGEST_MISMATCH'});
@@ -155,7 +161,7 @@ test('Embedded to Remote refuses changed server content before requesting new ho
 test('unselected existing Plus entries and distribution lock metadata remain unchanged', async () => {
     const input = project();
     input.turboWarpPlus = {schemaVersion: 1, extensions: [{id: 'existing', execution: 'sandboxed',
-        source: {type: 'embedded', path: 'extensions/existing.js'}, sha256: hash(content('existing')),
+        source: {type: 'embedded-file', path: 'extensions/existing.js'}, sha256: hash(content('existing')),
         version: '0.9.0', publisher: 'Fixture Author', capabilities: ['network'], dependencies: []}]};
     input.extensions.push('existing');
     input.extensionURLs.ordinary = 'https://ordinary.test/legacy.js';
@@ -224,7 +230,7 @@ test('abort before or during remote fetch returns no candidate, does not prompt 
 test('authoring state inspection reads saved sources and execution without fetching or approving code', async () => {
     assert.equal(await readProjectAuthoringState(await archive(), {zip: Zip}), null);
     const result = await prepareCatalogExtensionChanges(await archive(),
-        [request('sample', {distribution: 'embedded', execution: 'sandboxed'})], host(), {zip: Zip});
+        [request('sample', {distribution: 'embedded-file', execution: 'sandboxed'})], host(), {zip: Zip});
     const state = await readProjectAuthoringState(result.projectBytes, {zip: Zip});
     assert.deepEqual(state, result.manifest);
     assert.equal(Object.isFrozen(state), true);
@@ -275,19 +281,19 @@ test('unproven fetch responses, oversized bodies and invalid UTF-8 never reach t
 
 test('embedding keeps where the bytes came from, so a lost copy can still be recovered', async () => {
     const result = await prepareCatalogExtensionChanges(await archive(),
-        [request('sample', {distribution: 'embedded'})], host(), {zip: Zip});
+        [request('sample', {distribution: 'embedded-file'})], host(), {zip: Zip});
     const {json} = await decode(result);
     const [spec] = json.turboWarpPlus.extensions as {source: Record<string, unknown>}[];
     assert.deepEqual(spec!.source, {
-        type: 'embedded', path: `extensions/sample-${hash(content('sample'))}.js`, url: url('sample')
+        type: 'embedded-file', path: `extensions/sample-${hash(content('sample'))}.js`, url: url('sample')
     });
 });
 
 test('a recorded URL is checked against the pinned bytes even when a copy is retained', async () => {
     const ports = host({sources: new Map([[url('sample'), encoder.encode('different code')]])});
     const initial = await prepareCatalogExtensionChanges(await archive(),
-        [request('sample', {distribution: 'embedded'})], host(), {zip: Zip});
+        [request('sample', {distribution: 'embedded-file'})], host(), {zip: Zip});
     // Re-embedding re-reads the URL, which must still serve what the manifest pinned.
     await assert.rejects(prepareCatalogExtensionChanges(initial.projectBytes,
-        [request('sample', {distribution: 'embedded'})], ports, {zip: Zip}), {code: 'DIGEST_MISMATCH'});
+        [request('sample', {distribution: 'embedded-file'})], ports, {zip: Zip}), {code: 'DIGEST_MISMATCH'});
 });

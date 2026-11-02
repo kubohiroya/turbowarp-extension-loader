@@ -33,7 +33,10 @@ export interface PreparedProject {
 export interface ProjectIO {
     prepare(input: unknown, options?: {signal?: AbortSignal}): Promise<PreparedProject>;
     activate(context: ProjectContext | null): void;
-    readonly embeddedReader: {read(path: string, options?: {signal?: AbortSignal; maxBytes?: number}): Promise<Uint8Array>};
+    readonly embeddedReader: {
+        read(path: string, options?: {signal?: AbortSignal; maxBytes?: number}): Promise<Uint8Array>;
+        readData(id: string, options?: {signal?: AbortSignal; maxBytes?: number}): Promise<Uint8Array>;
+    };
     restoreJSON<T extends string | Record<string, unknown>>(json: T, context: ProjectContext | null): T;
     restoreFiles(files: Record<string, Uint8Array>, context: ProjectContext | null): Record<string, Uint8Array>;
     restoreArchive<T extends ZipArchive>(archive: T, context: ProjectContext | null): T;
@@ -58,6 +61,8 @@ const DEFAULTS = Object.freeze({maxArchiveBytes: DEFAULT_TOTAL_BYTES, maxTotalBy
     maxEntryBytes: DEFAULT_ENTRY_BYTES, maxProjectBytes: DEFAULT_PROJECT_JSON_BYTES, maxEntries: 4096, maxRatio: 1000});
 const decoder = new TextDecoder('utf-8', {fatal: true});
 const encoder = new TextEncoder();
+/** The one carrier spelling this family writes, and the only one a standard host is given. */
+export const DATA_CARRIER_PREFIX = 'data:text/javascript;base64,';
 function fail(message: string): never { throw new LoaderError('INVALID_ARCHIVE', message); }
 const cancelled = (signal?: AbortSignal) => { if (signal?.aborted) throw new LoaderError('CANCELLED', 'Project preparation cancelled'); };
 const table = Uint32Array.from({length: 256}, (_, value) => {
@@ -242,7 +247,7 @@ export function createProjectIO({zip: Zip, ...options}: ArchiveLimits & {zip?: Z
             const data = project as ProjectJSON;
             if (data.extensions !== undefined && (!Array.isArray(data.extensions) || data.extensions.some(id => typeof id !== 'string'))) throw new LoaderError('INVALID_PROJECT', 'Project extensions must be an ID array');
             if (data.extensionURLs !== undefined && (!data.extensionURLs || typeof data.extensionURLs !== 'object' || Array.isArray(data.extensionURLs))) throw new LoaderError('INVALID_PROJECT', 'Project extensionURLs must be an object');
-            for (const spec of manifest.extensions) if (spec.source.type !== 'remote' && !files.has(spec.source.path)) fail('Missing embedded extension entry');
+            for (const spec of manifest.extensions) if (spec.source.type === 'embedded-file' && !files.has(spec.source.path)) fail('Missing embedded extension entry');
             const context: ProjectContext = Object.freeze({});
             contexts.set(context, {manifest, project: data, files});
             const legacy: ProjectJSON = {...data};
@@ -270,6 +275,23 @@ export function createProjectIO({zip: Zip, ...options}: ArchiveLimits & {zip?: Z
                 const bytes = get(active)?.files.get(path);
                 if (!bytes || bytes.length > (maxBytes ?? limits.maxEntryBytes)) fail('Missing or oversized embedded content');
                 return new Uint8Array(bytes);
+            },
+            // The data carrier lives in the project document, under the extension's own ID,
+            // because that is the one place a standard TurboWarp host looks. Decoding is not
+            // evaluating: what comes back is bytes, verified against the digest like any other.
+            async readData(id: string, {signal, maxBytes}: {signal?: AbortSignal; maxBytes?: number} = {}): Promise<Uint8Array> {
+                cancelled(signal);
+                const carrier = get(active)?.project.extensionURLs?.[id];
+                if (typeof carrier !== 'string' || !carrier.startsWith(DATA_CARRIER_PREFIX)) fail('Missing embedded data carrier');
+                const encoded = carrier.slice(DATA_CARRIER_PREFIX.length);
+                // Reject before allocating: base64 holds 3 bytes for every 4 characters.
+                if (encoded.length / 4 * 3 > (maxBytes ?? limits.maxEntryBytes) + 2) fail('Missing or oversized embedded content');
+                let binary: string;
+                try { binary = atob(encoded); } catch { fail('Embedded data carrier is not base64'); }
+                const bytes = new Uint8Array(binary.length);
+                for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+                if (bytes.length > (maxBytes ?? limits.maxEntryBytes)) fail('Missing or oversized embedded content');
+                return bytes;
             }
         }),
         restoreJSON,

@@ -156,7 +156,7 @@ test('a load survives a recovered fetch and a final failure still stops the entr
     const recovered = flaky(2);
     const captured: {signal?: AbortSignal} = {};
     const loader = createExtensionLoader(ports(withFetchRetry(recovered, {baseDelayMs: 1}), captured));
-    assert.deepEqual((await loader.load({schemaVersion: 1, extensions: [spec('remote', {type: 'remote', url})]})).ids, ['remote']);
+    assert.deepEqual((await loader.load({schemaVersion: 1, extensions: [spec('remote', {type: 'remote-cacheable', url})]})).ids, ['remote']);
     assert.equal(recovered.attempts, 3);
     await loader.unload();
 
@@ -167,9 +167,9 @@ test('a load survives a recovered fetch and a final failure still stops the entr
     const failing = createExtensionLoader(ports(withFetchRetry(hopeless, {baseDelayMs: 1}), second));
     const later = flaky(Infinity);
     await assert.rejects(failing.load({schemaVersion: 1, extensions: [
-        spec('first', {type: 'embedded', path: 'extensions/fixture.js'}),
-        spec('broken', {type: 'remote', url}),
-        spec('never', {type: 'remote', url: 'https://example.org/never.js'})
+        spec('first', {type: 'embedded-file', path: 'extensions/fixture.js'}),
+        spec('broken', {type: 'remote-cacheable', url}),
+        spec('never', {type: 'remote-cacheable', url: 'https://example.org/never.js'})
     ]}), codeIs('LOAD_FAILED'));
     assert.equal(hopeless.attempts, 3, 'only the failing entry was fetched, three times');
     assert.equal(later.attempts, 0);

@@ -17,7 +17,7 @@ interface SpecFixture {
     dependencies?: string[];
     capabilities?: string[];
 }
-const spec = (id = 'fixture', source: SourceFixture = {type: 'embedded', path: 'extensions/fixture.js'}): SpecFixture =>
+const spec = (id = 'fixture', source: SourceFixture = {type: 'embedded-file', path: 'extensions/fixture.js'}): SpecFixture =>
     ({id, source, execution: 'unsandboxed', sha256: hash(fixture)});
 const manifest = (...extensions: SpecFixture[]) => ({schemaVersion: 1, extensions: extensions.length ? extensions : [spec()]});
 const codeIs = (code: string) => (error: unknown) => error instanceof LoaderError && error.code === code;
@@ -55,7 +55,7 @@ test('missing manifest does not touch host ports or legacy extension URLs', asyn
 });
 
 test('embedded and remote exact bytes both require explicit host digest approval', async () => {
-    for (const source of [{type: 'embedded', path: 'extensions/fixture.js'}, {type: 'remote', url: 'https://example.org/fixture.js'}]) {
+    for (const source of [{type: 'embedded-file', path: 'extensions/fixture.js'}, {type: 'remote-cacheable', url: 'https://example.org/fixture.js'}]) {
         const {loader, calls} = host();
         assert.deepEqual((await loader.load(manifest(spec('fixture', source)))).ids, ['fixture']);
         const register = calls.find(call => call[0] === 'register')!;
@@ -81,8 +81,8 @@ test('all extensions are verified and authorized before any registration, in dep
 
 test('execution mode remains exact across Embedded and Remote validation, approval and registration', async () => {
     for (const execution of ['sandboxed', 'unsandboxed']) {
-        for (const source of [{type: 'embedded', path: 'extensions/fixture.js'},
-            {type: 'remote', url: 'https://example.org/fixture.js'}]) {
+        for (const source of [{type: 'embedded-file', path: 'extensions/fixture.js'},
+            {type: 'remote-cacheable', url: 'https://example.org/fixture.js'}]) {
             let reviewed = 0;
             let registered = 0;
             const {loader} = host({trustProvider: {async authorize(code: ResolvedCode) {
@@ -121,13 +121,13 @@ test('malformed manifests cannot claim trust, alternate source, fallback or exec
     const cases: [unknown, string][] = [
         [{...manifest(), schemaVersion: 2}, 'UNSUPPORTED_SCHEMA'],
         [{...manifest(), trusted: true}, 'INVALID_MANIFEST'],
-        [manifest({...spec(), source: {type: 'embedded', path: 'extensions/../fixture.js'}}), 'INVALID_SOURCE'],
-        [manifest({...spec(), source: {type: 'embedded', path: 'extensions//fixture.js'}}), 'INVALID_SOURCE'],
-        [manifest({...spec(), source: {type: 'embedded', path: 'extensions/%2e%2e/fixture.js'}}), 'INVALID_SOURCE'],
-        [manifest({...spec(), source: {type: 'remote', url: 'http://example.org/a.js'}}), 'INVALID_SOURCE'],
-        [manifest({...spec(), source: {type: 'remote', url: 'data:text/javascript,alert(1)'}}), 'INVALID_SOURCE'],
-        [manifest({...spec(), source: {type: 'remote', url: 'https://user:pass@example.org/a.js'}}), 'INVALID_SOURCE'],
-        [manifest({...spec(), source: {type: 'remote', url: 'https://example.org/a.js', path: 'extensions/a.js'}}), 'INVALID_MANIFEST'],
+        [manifest({...spec(), source: {type: 'embedded-file', path: 'extensions/../fixture.js'}}), 'INVALID_SOURCE'],
+        [manifest({...spec(), source: {type: 'embedded-file', path: 'extensions//fixture.js'}}), 'INVALID_SOURCE'],
+        [manifest({...spec(), source: {type: 'embedded-file', path: 'extensions/%2e%2e/fixture.js'}}), 'INVALID_SOURCE'],
+        [manifest({...spec(), source: {type: 'remote-cacheable', url: 'http://example.org/a.js'}}), 'INVALID_SOURCE'],
+        [manifest({...spec(), source: {type: 'remote-cacheable', url: 'data:text/javascript,alert(1)'}}), 'INVALID_SOURCE'],
+        [manifest({...spec(), source: {type: 'remote-cacheable', url: 'https://user:pass@example.org/a.js'}}), 'INVALID_SOURCE'],
+        [manifest({...spec(), source: {type: 'remote-cacheable', url: 'https://example.org/a.js', path: 'extensions/a.js'}}), 'INVALID_MANIFEST'],
         [manifest({...spec(), execution: 'automatic'}), 'INVALID_EXECUTION'],
         [manifest({...spec(), sha256: 'x'.repeat(64)}), 'INVALID_DIGEST'],
         [manifest(spec('pen')), 'INVALID_ID'],
@@ -179,8 +179,8 @@ const padded = (size: number) => {
 test('default limits read a several-MiB extension from every source and stop past 16 MiB', async () => {
     // A bundled story runtime is about 7 MiB; it must load in a Plus form as it does from a Data URL.
     const large = padded(7.5 * 1024 * 1024);
-    for (const source of [{type: 'embedded', path: 'extensions/fixture.js'}, {type: 'remote', url: 'https://example.org/fixture.js'},
-        {type: 'embedded', url: 'https://example.org/fixture.js', path: 'extensions/fixture.js'}]) {
+    for (const source of [{type: 'embedded-file', path: 'extensions/fixture.js'}, {type: 'remote-cacheable', url: 'https://example.org/fixture.js'},
+        {type: 'embedded-file', url: 'https://example.org/fixture.js', path: 'extensions/fixture.js'}]) {
         const {loader, calls} = host({embeddedReader: {async read() { return large; }},
             fetcher: {async fetch(url: string) { return {bytes: large, finalURL: url, redirects: []}; }}});
         assert.deepEqual((await loader.load(manifest({...spec('fixture', source), sha256: hash(large)}))).ids, ['fixture']);
@@ -193,7 +193,7 @@ test('default limits read a several-MiB extension from every source and stop pas
 });
 
 test('remote response requires exact final URL and no redirects', async () => {
-    const remote = spec('fixture', {type: 'remote', url: 'https://example.org/fixture.js'});
+    const remote = spec('fixture', {type: 'remote-cacheable', url: 'https://example.org/fixture.js'});
     for (const response of [{bytes: fixture}, {bytes: fixture, finalURL: remote.source.url, redirects: ['https://evil.test/']}, {bytes: fixture, finalURL: 'https://evil.test/', redirects: []}]) {
         const {loader, calls} = host({fetcher: {async fetch() { return response; }}});
         await assert.rejects(loader.load(manifest(remote)), codeIs('REDIRECT_DENIED'));
@@ -203,26 +203,29 @@ test('remote response requires exact final URL and no redirects', async () => {
 
 test('verified cache works offline but still needs trust; corrupted cache fails closed', async () => {
     let fetches = 0;
-    const remote = spec('fixture', {type: 'remote', url: 'https://example.org/fixture.js'});
+    const remote = spec('fixture', {type: 'remote-cacheable', url: 'https://example.org/fixture.js'});
     const {loader, calls} = host({cache: {async get() { return fixture; }, async put() { assert.fail('cache hit should not be rewritten'); }}, fetcher: {async fetch() { fetches++; throw Error('offline'); }}});
     await loader.load(manifest(remote));
     assert.equal(fetches, 0);
     assert.equal(calls.filter(call => call[0] === 'authorize').length, 1);
     const bad = host({cache: {async get() { return new Uint8Array([1]); }, async put() {}}});
-    await assert.rejects(bad.loader.load(manifest()), codeIs('CACHE_INTEGRITY'));
+    await assert.rejects(bad.loader.load(manifest(remote)), codeIs('CACHE_INTEGRITY'));
 });
 
 test('offline cache miss preserves cause and never registers', async () => {
     const failure = new TypeError('Network unavailable');
     const {loader, calls} = host({cache: {async get() { return null; }, async put() {}}, fetcher: {async fetch() { throw failure; }}});
-    await assert.rejects(loader.load(manifest(spec('fixture', {type: 'remote', url: 'https://example.org/fixture.js'}))),
+    await assert.rejects(loader.load(manifest(spec('fixture', {type: 'remote-cacheable', url: 'https://example.org/fixture.js'}))),
         (error: unknown) => error instanceof LoaderError && error.code === 'LOAD_FAILED' && error.cause === failure);
     assert.equal(calls.some(call => call[0] === 'begin'), false);
 });
 
 test('cache receives a private verified byte copy', async () => {
-    const {loader, calls} = host({cache: {async get() { return undefined; }, async put(digest: string, bytes: Uint8Array) { assert.equal(digest, hash(fixture)); bytes.fill(0); }}});
-    await loader.load(manifest());
+    let put = 0;
+    const {loader, calls} = host({cache: {async get() { return undefined; }, async put(digest: string, bytes: Uint8Array) { put++; assert.equal(digest, hash(fixture)); bytes.fill(0); }}});
+    // Only a cacheable source is written, so the copy has to be one this reaches.
+    await loader.load(manifest(spec('fixture', {type: 'remote-cacheable', url: 'https://example.org/fixture.js'})));
+    assert.equal(put, 1);
     assert.equal(calls.find(call => call[0] === 'register')![2], new TextDecoder().decode(fixture));
 });
 

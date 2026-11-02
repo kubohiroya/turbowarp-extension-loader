@@ -88,8 +88,11 @@ export async function convertProjectSources(input: unknown, ports: PackagingPort
         const bytes = encoder.encode(record.code);
         if (await digest(bytes) !== record.sha256) fail('CONVERSION_INTEGRITY', 'UTF-8 conversion changed verified source bytes');
         own(artifacts, record.id, new Uint8Array(bytes));
-        // Embedded and cached both keep a copy in the archive, so both need their entry written.
-        if (validated.source.type !== 'remote') {
+        // A `data:` carrier lives in the project document, and packaging refuses that document's
+        // legacy URLs outright, so there would be nowhere to put the bytes.
+        if (validated.source.type === 'embedded-data') fail('UNSUPPORTED_SOURCE', 'Packaging cannot write a data: carrier');
+        // Only a file carrier has an archive entry to write.
+        if (validated.source.type === 'embedded-file') {
             const path = validated.source.path;
             if (outputPaths.has(path)) fail('DUPLICATE_EMBEDDED_PATH', 'Each extension needs a distinct embedded output path');
             outputPaths.add(path);
@@ -137,7 +140,7 @@ export async function prepareOfflinePackage(input: unknown, ports: PackagingPort
             resourceDependencies![spec.id].length) {
             fail('UNBUNDLED_DEPENDENCY', `Declare an empty external resource dependency list for ${spec.id}; external resources are not yet bundled`);
         }
-        own(targets, spec.id, {type: 'embedded', path: `extensions/${spec.id}-${spec.sha256}.js`});
+        own(targets, spec.id, {type: 'embedded-file', path: `extensions/${spec.id}-${spec.sha256}.js`});
     }
     // Options pass through unchanged; convertProjectSources reports a missing ZIP implementation.
     const result = await convertProjectSources(input, ports, {...options, targets} as ConversionOptions);
@@ -166,7 +169,7 @@ export async function migrateLegacyDataURL({id, url, sha256, metadata}: LegacyDa
         }
     } catch (cause) { throw new LoaderError('INVALID_ENCODING', 'Invalid legacy Data URL encoding', id, cause); }
     const path = `extensions/${id}.js`;
-    const manifest = validateManifest({schemaVersion: 1, extensions: [{id, source: {type: 'embedded', path}, execution: 'unsandboxed', sha256}]});
+    const manifest = validateManifest({schemaVersion: 1, extensions: [{id, source: {type: 'embedded-file', path}, execution: 'unsandboxed', sha256}]});
     const [record] = await collect(manifest, {...ports, embeddedReader: {async read() { return bytes; }}}, options.loaderOptions, options.signal);
     return Object.freeze({spec: manifest.extensions[0], bytes: encoder.encode(record.code), metadata: metadataFor({[id]: metadata}, id)});
 }

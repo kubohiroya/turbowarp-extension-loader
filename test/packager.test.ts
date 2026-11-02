@@ -8,7 +8,7 @@ import {convertProjectSources, prepareOfflinePackage, migrateLegacyDataURL, rest
 const bytes = new TextEncoder().encode('﻿(function(Scratch){Scratch.extensions.register({getInfo(){return {id:"sample",blocks:[]}}});})(Scratch);\n');
 const sha256 = createHash('sha256').update(bytes).digest('hex');
 const spec = {id: 'sample', execution: 'unsandboxed' as const, sha256,
-    source: {type: 'remote' as const, url: 'https://example.test/extension.js'}, version: '1.0.0'};
+    source: {type: 'remote-cacheable' as const, url: 'https://example.test/extension.js'}, version: '1.0.0'};
 /** The project fixture is deliberately loose: tests add IDs, URLs and specs the public types pin down. */
 const project = () => ({targets: [{isStage: true, variables: {}, comments: {}}], extensions: ['sample', 'pen'],
     extensionURLs: {sample: spec.source.url} as Record<string, string>,
@@ -35,7 +35,7 @@ test('offline preparation reuses digest and approval, embeds exact BOM bytes and
     assert.deepEqual(host.events, [['fetch', spec.source.url], ['authorize', 'sample']]);
     assert.equal(result.offline, true);
     const source = result.manifest.extensions[0].source;
-    assert.ok(source.type === 'embedded');
+    assert.ok(source.type === 'embedded-file');
     const archive = await Zip.loadAsync(result.projectBytes);
     assert.deepEqual(await archive.file(source.path)!.async('uint8array'), bytes);
     assert.deepEqual(result.artifacts.sample, bytes);
@@ -50,14 +50,14 @@ test('embedded to remote conversion supplies exact publish bytes and retains pri
     const embedded = await prepareOfflinePackage(project(), ports(), offline({metadata: {sample: {license: 'MPL-2.0'}}}));
     const host = ports();
     const remote = await convertProjectSources(embedded.projectBytes, host, {zip: Zip,
-        targets: {sample: {type: 'remote', url: 'https://cdn.example.test/pinned.js'}}});
+        targets: {sample: {type: 'remote-cacheable', url: 'https://cdn.example.test/pinned.js'}}});
     assert.deepEqual(host.events, [['authorize', 'sample']]);
     const source = remote.manifest.extensions[0].source;
-    assert.ok(source.type === 'remote');
+    assert.ok(source.type === 'remote-cacheable');
     assert.equal(source.url, 'https://cdn.example.test/pinned.js');
     assert.deepEqual(remote.artifacts.sample, bytes);
     const previous = (remote.lock.previousLock as typeof remote.lock).extensions[0].originalSource;
-    assert.ok(previous.type === 'remote');
+    assert.ok(previous.type === 'remote-cacheable');
     assert.equal(previous.url, spec.source.url);
     assert.equal(remote.lock.extensions[0].metadata!.license, 'MPL-2.0');
 });
@@ -67,7 +67,7 @@ test('package refusal cannot evaluate or publish unapproved, corrupted, redirect
     const host = ports();
     host.fetcher.fetch = async url => ({bytes: new Uint8Array([1]), finalURL: url, redirects: []});
     await assert.rejects(prepareOfflinePackage(project(), host, offline()), {code: 'DIGEST_MISMATCH'});
-    await assert.rejects(convertProjectSources(project(), ports(), {zip: Zip, targets: {sample: {type: 'remote', url: 'http://unsafe.test/code.js'}}}), {code: 'INVALID_SOURCE'});
+    await assert.rejects(convertProjectSources(project(), ports(), {zip: Zip, targets: {sample: {type: 'remote-cacheable', url: 'http://unsafe.test/code.js'}}}), {code: 'INVALID_SOURCE'});
 });
 
 test('offline output rejects undeclared resources, resource dependencies and ordinary remote extension URLs', async () => {
@@ -126,12 +126,12 @@ test('conversion rejects two embedded output IDs sharing a path and refuses unre
     const input = project();
     input.turboWarpPlus.extensions.push({...spec, id: 'second'});
     await assert.rejects(convertProjectSources(input, ports(), {zip: Zip, targets: {
-        sample: {type: 'embedded', path: 'extensions/shared.js'},
-        second: {type: 'embedded', path: 'extensions/shared.js'}
+        sample: {type: 'embedded-file', path: 'extensions/shared.js'},
+        second: {type: 'embedded-file', path: 'extensions/shared.js'}
     }}), {code: 'DUPLICATE_EMBEDDED_PATH'});
     const archive = new Zip().file('project.json', JSON.stringify(project())).file('extensions/existing.js', 'do not overwrite');
     await assert.rejects(convertProjectSources(await archive.generateAsync({type: 'uint8array'}), ports(), {zip: Zip,
-        targets: {sample: {type: 'embedded', path: 'extensions/existing.js'}}}), {code: 'SOURCE_PATH_COLLISION'});
+        targets: {sample: {type: 'embedded-file', path: 'extensions/existing.js'}}}), {code: 'SOURCE_PATH_COLLISION'});
 });
 
 test('prototype-named IDs do not inherit conversion targets or distribution metadata', async () => {
@@ -141,7 +141,7 @@ test('prototype-named IDs do not inherit conversion targets or distribution meta
     input.extensionURLs = {};
     const result = await convertProjectSources(input, ports(), {zip: Zip});
     assert.equal(result.manifest.extensions[0].id, 'constructor');
-    assert.equal(result.manifest.extensions[0].source.type, 'remote');
+    assert.equal(result.manifest.extensions[0].source.type, 'remote-cacheable');
     assert.equal(Object.hasOwn(result.artifacts, 'constructor'), true);
     assert.equal(result.lock.extensions[0].metadata, null);
 });

@@ -20,7 +20,7 @@ test('authorization proof cannot be forged with manifest fields or a copied reco
         }
     });
     await loader.load({schemaVersion: 1, extensions: [{id: 'proof', execution: 'unsandboxed', sha256,
-        source: {type: 'embedded', path: 'extensions/proof.js'}}]});
+        source: {type: 'embedded-file', path: 'extensions/proof.js'}}]});
     assert.equal(validDuringRegistration, true);
     assert.equal(isAuthorizedCode(issued), false);
     assert.equal(isAuthorizedCode({...issued}), false);
