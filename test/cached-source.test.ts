@@ -11,6 +11,8 @@ const codeIs = (code: string) => (error: unknown) => error instanceof LoaderErro
 
 const url = 'https://example.test/fixture.js';
 const path = 'extensions/fixture.js';
+const embeddedWithURL = () => cached({type: 'embedded', url, path});
+const embedded = () => cached({type: 'embedded', path});
 const cached = (source: Record<string, unknown> = {type: 'cached', url, path}) =>
     ({schemaVersion: 1, extensions: [{id: 'fixture', source, execution: 'unsandboxed', sha256: hash(fixture)}]});
 
@@ -38,12 +40,19 @@ function host(overrides: Record<string, unknown> = {}) {
     return {loader: createExtensionLoader(ports), calls, events};
 }
 
-test('a cached source keeps both its canonical URL and its retained path', () => {
+test('a manifest written before 0.4.0 still reads, as the embedded source it always was', () => {
     const manifest = validateManifest(cached());
-    assert.deepEqual(manifest.extensions[0]!.source, {type: 'cached', url, path});
+    assert.deepEqual(manifest.extensions[0]!.source, {type: 'embedded', url, path});
 });
 
-test('a cached source resolves from the retained copy without reaching the network', async () => {
+test('an embedded source may record where its bytes came from, or not', () => {
+    const withURL = validateManifest(embeddedWithURL());
+    assert.deepEqual(withURL.extensions[0]!.source, {type: 'embedded', url, path});
+    const withoutURL = validateManifest(embedded());
+    assert.deepEqual(withoutURL.extensions[0]!.source, {type: 'embedded', path});
+});
+
+test('an embedded source resolves from the retained copy without reaching the network', async () => {
     const {loader, calls} = host();
     assert.deepEqual((await loader.load(cached())).ids, ['fixture']);
     assert.deepEqual(calls, [['read', path]], 'the retained copy alone satisfies the load');
@@ -68,7 +77,7 @@ test('a retained copy that is not the pinned code fails instead of being substit
     await assert.rejects(loader.load(cached()), codeIs('DIGEST_MISMATCH'));
 });
 
-test('a cached source follows the same URL policy as a remote one', async () => {
+test('a recorded URL follows the same policy as a remote one', async () => {
     assert.throws(() => validateManifest(cached({type: 'cached', url: 'http://example.test/x.js', path})), codeIs('INVALID_SOURCE'));
     assert.throws(() => validateManifest(cached({type: 'cached', url: `${url}#fragment`, path})), codeIs('INVALID_SOURCE'));
     const {loader} = host({
@@ -78,7 +87,7 @@ test('a cached source follows the same URL policy as a remote one', async () => 
     await assert.rejects(loader.load(cached()), codeIs('REDIRECT_DENIED'));
 });
 
-test('a cached source follows the same retained path policy as an embedded one', () => {
+test('the old spelling follows the same path and field policies it always did', () => {
     for (const unsafe of ['../outside.js', 'extensions/../../x.js', 'elsewhere/fixture.js', 'extensions/fixture.txt']) {
         assert.throws(() => validateManifest(cached({type: 'cached', url, path: unsafe})), codeIs('INVALID_SOURCE'));
     }

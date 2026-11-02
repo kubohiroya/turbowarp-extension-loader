@@ -149,13 +149,21 @@ await loader.load(manifest, {
 `remote` は両方向に効きます。その拡張についてキャッシュを読まず、書き込みもしません。
 何も残したくないと言った人には、何も残りません。
 
-### 語彙と合っていない名前
+### 作品が保持の仕方をどう書くか
 
-`source.type` にも `cached` という値があります。これは作品がバイト列を持ち、**かつ**その取得元
-URL も記録している形です。上の表に従えば、作品が中身を持つのは `embedded` なので、この名前だけ
-ファミリーの語彙と合っていません。改名すると保存済みの作品に書かれた Manifest に影響するため、
-そのままにして、ここに記録します。両者は独立です。`remote` の source を cached にできますし、
-`cached` の source を remote にもできます。
+`source.type` は表のとおり2値です。作品が中身を持つ `embedded` と、参照だけを持つ `remote`
+です。`embedded` は取得元 URL も記録できます。
+
+```json
+{"type": "embedded", "path": "extensions/thing-<sha256>.js", "url": "https://example.test/thing.js"}
+```
+
+この URL があるから、控えが欠けたときに取得へ落ちられます。無ければ、欠けた時点で終わりです。
+
+0.4.0 より前に書かれた Manifest は、同じものを `cached` と綴ります。**いまも読めます。**
+もともとそうであった embedded の source として読むので、保存済みの作品は開き続けます。書き出し
+はしません。`prepareCatalogExtensionChanges` も受け取らなくなりました。`distribution` は
+`embedded` か `remote` です。**ブラウザー**のどこに控えるかは開く人の決定で、`load()` へ渡します。
 
 ## ソースとビルド
 

@@ -8,7 +8,18 @@ import {DEFAULT_LOADER_LIMITS} from './limits.js';
  * weaker source — the Manifest pins the SHA-256, so a retained copy either is exactly the pinned
  * code or the load fails, which is why it may be read before the network.
  */
-export type ExtensionSource = Readonly<{type: 'embedded'; path: string} | {type: 'remote'; url: string} | {type: 'cached'; url: string; path: string}>;
+/**
+ * Where a project keeps an extension.
+ *
+ * `embedded` is the project carrying the bytes; `remote` is the project carrying only a
+ * reference. An embedded source may also record the URL the bytes came from, which is what makes
+ * falling back possible when a retained copy is missing — and is the only difference between the
+ * two forms this used to spell as separate types.
+ *
+ * A manifest written before 0.4.0 may say `cached` for an embedded source that records its URL.
+ * That spelling is still read, because projects already carry it; nothing writes it any more.
+ */
+export type ExtensionSource = Readonly<{type: 'embedded'; path: string; url?: string} | {type: 'remote'; url: string}>;
 export type ExecutionMode = 'sandboxed' | 'unsandboxed';
 export interface ExtensionSpec {
     readonly id: string;
@@ -156,14 +167,18 @@ function sourceOf(source: unknown): ExtensionSource {
         keys(source, ['type', 'url'], 'source');
         return Object.freeze({type: 'remote', url: remoteURL(string(source.url, 'URL', 4096))});
     }
-    if (source.type === 'embedded') {
-        keys(source, ['type', 'path'], 'source');
-        return Object.freeze({type: 'embedded', path: embeddedPath(source.path)});
-    }
-    if (source.type === 'cached') {
-        keys(source, ['type', 'url', 'path'], 'source');
-        // The same HTTPS and path policies as the two single-location forms it combines.
-        return Object.freeze({type: 'cached', url: remoteURL(string(source.url, 'URL', 4096)), path: embeddedPath(source.path)});
+    // `cached` is how a manifest written before 0.4.0 spells an embedded source that records its
+    // URL. It is read as exactly that; the same HTTPS and path policies apply either way.
+    if (source.type === 'embedded' || source.type === 'cached') {
+        keys(source, ['type', 'path', 'url'], 'source');
+        const path = embeddedPath(source.path);
+        // The old spelling always carried a URL, so a missing one is a malformed field there,
+        // reported by the shared validator exactly as it always was.
+        if (source.type === 'cached') {
+            return Object.freeze({type: 'embedded', path, url: remoteURL(string(source.url, 'URL', 4096))});
+        }
+        if (source.url === undefined) return Object.freeze({type: 'embedded', path});
+        return Object.freeze({type: 'embedded', path, url: remoteURL(string(source.url, 'URL', 4096))});
     }
     fail('INVALID_SOURCE', 'Unsupported source type');
 }
@@ -399,20 +414,22 @@ export function createExtensionLoader(ports: LoaderPorts, options: LoaderOptions
         if (!bytes) {
             // The manifest is frozen, so the narrowed source stays valid inside the port callbacks.
             const source = spec.source;
-            if (source.type !== 'remote') {
+            if (source.type === 'embedded') {
                 if (typeof ports.embeddedReader?.read !== 'function') fail('INVALID_PORT', 'Embedded reader is unavailable', spec.id);
-                // A cached source may have lost its retained copy; its URL remains the canonical one.
                 try {
                     bytes = snapshotBytes(await guarded(() => ports.embeddedReader!.read(source.path, {signal, maxBytes: limits.maxBytes}), signal), limits.maxBytes, spec.id);
                 } catch (cause) {
-                    if (source.type === 'embedded' || signal.aborted) throw cause;
+                    // Falling back is only possible where the project recorded where the bytes
+                    // came from; without that, a missing retained copy is the end of it.
+                    if (source.url === undefined || signal.aborted) throw cause;
                     report({type: 'retained-copy-unavailable', id: spec.id});
                 }
             }
-            if (!bytes && source.type !== 'embedded') {
+            const url = source.url;
+            if (!bytes && url !== undefined) {
                 if (typeof ports.fetcher?.fetch !== 'function') fail('INVALID_PORT', 'Remote fetch port is unavailable', spec.id);
-                const response = await guarded(() => ports.fetcher!.fetch(source.url, {signal, maxBytes: limits.maxBytes}), signal);
-                if (!response || !Array.isArray(response.redirects) || response.redirects.length || response.finalURL !== source.url) fail('REDIRECT_DENIED', 'Unproven or redirected remote source', spec.id);
+                const response = await guarded(() => ports.fetcher!.fetch(url, {signal, maxBytes: limits.maxBytes}), signal);
+                if (!response || !Array.isArray(response.redirects) || response.redirects.length || response.finalURL !== url) fail('REDIRECT_DENIED', 'Unproven or redirected remote source', spec.id);
                 bytes = snapshotBytes(response.bytes, limits.maxBytes, spec.id);
             }
             if (!bytes) fail('SOURCE_UNAVAILABLE', 'Extension bytes could not be read', spec.id);

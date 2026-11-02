@@ -148,13 +148,24 @@ await loader.load(manifest, {
 `remote` holds in both directions: the cache is not read for that extension and not written
 either, so a person who asked to leave nothing behind leaves nothing behind.
 
-### A name that is out of step
+### How a project says where it keeps an extension
 
-`source.type` has a value also spelled `cached`, for a project that carries the bytes **and**
-records the URL they came from. By the table above, a project that carries bytes is `embedded`,
-so this name does not match the vocabulary the rest of the family uses. Renaming it changes
-manifests already written into saved projects, so it is left as it is and noted here instead.
-The two are independent: a `remote` source may be cached, and a `cached` source may be remote.
+`source.type` has two values, matching the table: `embedded` for a project that carries the
+bytes, `remote` for one that carries only a reference. An embedded source may also record the
+URL the bytes came from:
+
+```json
+{"type": "embedded", "path": "extensions/thing-<sha256>.js", "url": "https://example.test/thing.js"}
+```
+
+That URL is what makes falling back possible when a retained copy is missing. Without it, a
+missing copy is the end of it.
+
+A manifest written before 0.4.0 spells that same thing `cached`. It is still read, as exactly
+the embedded source it always was, so projects already saved keep opening. Nothing writes it any
+more, and `prepareCatalogExtensionChanges` no longer takes it: `distribution` is `embedded` or
+`remote`, because where bytes are cached **in the browser** is the opener's decision and goes to
+`load()` instead.
 
 ## Source and build
 
