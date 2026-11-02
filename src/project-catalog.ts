@@ -4,6 +4,7 @@ import {createProjectIO, DATA_CARRIER_PREFIX, type ArchiveLimits, type ZipConstr
 import {readPreparedProject} from './project-data.js';
 import {collectVerifiedCodes} from './verified-code.js';
 import {DEFAULT_LOADER_LIMITS, DEFAULT_TOTAL_BYTES} from './limits.js';
+import {markFetchRejection} from './fetch-rejection.js';
 
 export interface CatalogExtensionRequest {
     id: string;
@@ -140,6 +141,7 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
             let response: FetchResult;
             try { response = await wait(() => ports.fetcher!.fetch(url, {signal, maxBytes})); }
             catch (cause) {
+                markFetchRejection(cause);
                 if (cause instanceof LoaderError) throw cause;
                 throw new LoaderError('LOAD_FAILED', 'Catalog extension could not be fetched', undefined, cause);
             }

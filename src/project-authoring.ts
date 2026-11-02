@@ -4,6 +4,7 @@ import {createProjectIO, type ArchiveLimits, type ZipConstructor} from './projec
 import {readPreparedProject} from './project-data.js';
 import {collectVerifiedCodes} from './verified-code.js';
 import {DEFAULT_LOADER_LIMITS} from './limits.js';
+import {markFetchRejection} from './fetch-rejection.js';
 
 export type ExtensionAdditionRequest = {
     id: string;
@@ -138,6 +139,7 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
             let response: FetchResult;
             try { response = await wait(() => ports.fetcher!.fetch(url, {signal, maxBytes: limits.maxBytes})); }
             catch (cause) {
+                markFetchRejection(cause);
                 if (cause instanceof LoaderError) throw cause;
                 throw new LoaderError('LOAD_FAILED', 'Remote extension could not be fetched', draft.id, cause);
             }

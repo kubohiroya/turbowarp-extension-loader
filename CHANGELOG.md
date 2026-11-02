@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `isWorthAskingAgain(error)` answers, for the rejection of a whole `load()`, `./project-catalog` or
+  `./project-authoring` operation, whether asking again could answer differently — the question a
+  host has before offering "try again". Unlike `isTransientFetchFailure`, which judges one transfer
+  inside a fetch port, it says yes to the browser `TypeError` an operation wraps in `LOAD_FAILED`
+  and to `TIMEOUT`, and no to `CANCELLED`, `ROLLBACK_FAILED`, any permanent refusal anywhere in an
+  `AggregateError` or `cause` chain, and a bare `TypeError` that did not come out of a fetch port.
+  The Loader now records which rejections a fetch port produced so it can tell them apart.
+- `onRetry` also reports `attempts`, the most attempts the fetch can make in all, so a host can say
+  "attempt 2 of 3" without knowing the retry settings.
+
 ## 0.3.1
 
 Released on 2026-11-02. One fix, the one 0.3.0 said would follow here: `./project-catalog` no
