@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
-Two additions a host needs to give a project an address at save time and to keep one cache across
+Released on 2026-11-03. Two additions a host needs to give a project an address at save time and to keep one cache across
 projects. Both are additive: the string form of `appURI`, every existing method and every default
 behave as before.
 
