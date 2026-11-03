@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `createIndexedDBContentCache({appURI})` also accepts `() => string | undefined`, read at each
+  write like `sharedDigests`, so a host that keeps one cache while projects are reopened files each
+  write under the project open at that moment. `undefined` files the write as shared, as a missing
+  `appURI` always has. The string form behaves as before. An `appURI` that is neither a string nor
+  a function is now refused with `Invalid IndexedDB cache options` instead of being used as a
+  bucket name.
+
 ## 0.7.0
 
 Released on 2026-11-03. A classifier a host needs before offering "try again" after a failed

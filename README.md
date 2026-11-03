@@ -152,6 +152,17 @@ is read at each write, so a host may keep filling it as its catalog loads. A hos
 which project it is opening files everything as shared, because guessing a name is worse than
 admitting there is none.
 
+A host that keeps one cache while projects are opened and closed — one per VM, say — passes
+`appURI` as a function instead. Like `sharedDigests`, it is read at each write (when `put` is
+called), so each write is filed under the project open at that moment, and a function that returns
+`undefined` files that write as shared. A string still names one project for the cache's lifetime.
+
+```js
+let openProject;                           // the URI of the project open now, or undefined
+const cache = createIndexedDBContentCache({appURI: () => openProject, sharedDigests: catalogDigests});
+// on each load: openProject = prepared.manifest?.uri;
+```
+
 Releasing a bucket drops its claims and reclaims only the bytes **nothing else refers to**. One
 copy referred to twice stays: the other project did not ask to lose it. An eviction takes the
 claims on it as well, so a bucket never lists bytes that are gone.

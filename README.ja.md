@@ -151,6 +151,17 @@ await cache.deleteBucket(manifest.uri);    // 手放す。他が参照してい�
 ごとに読むので、カタログの読み込みに合わせて埋めていけます。どの作品を開いているか言えないホスト
 は、すべてを shared に入れます。名前を推測するのは、無いと認めるより悪いからです。
 
+作品を開き直しても1つのキャッシュを使い続けるホスト（たとえば VM ごとに1つ）は、`appURI` に
+関数を渡します。`sharedDigests` と同じく書き込みごと（`put` を呼んだとき）に読むので、各書き込みは
+その時点で開いている作品の下に入り、関数が `undefined` を返した書き込みは shared に入ります。
+文字列を渡せば、これまでどおりキャッシュの寿命の間ずっと1つの作品を指します。
+
+```js
+let openProject;                           // いま開いている作品の URI。無ければ undefined
+const cache = createIndexedDBContentCache({appURI: () => openProject, sharedDigests: catalogDigests});
+// 読み込むたびに: openProject = prepared.manifest?.uri;
+```
+
 バケットを手放すと claim が落ち、**他が参照していない**バイト列だけが回収されます。2回参照されて
 いる1つの実体は残ります。もう一方の作品は失うことを求めていません。容量超過で追い出すときは
 claim も一緒に落ちるので、バケットが「もう無いもの」を並べることはありません。

@@ -130,3 +130,35 @@ test('clearing takes the claims with the bytes', async () => {
     assert.deepEqual((await cache.getSize()).entries, 0);
     await cache.close();
 });
+
+test('a function appURI is read at each write, so one cache follows the project that is open', async () => {
+    let current: string | undefined = 'https://example.test/p/one.sb3';
+    let reads = 0;
+    const cache = realCache({appURI: () => { reads++; return current; }});
+    await cache.put(digestOf('a'), bytesOf('one'));
+    current = 'https://example.test/p/two.sb3';
+    await cache.put(digestOf('b'), bytesOf('two'));
+    // A function that cannot name the project files that write as shared.
+    current = undefined;
+    await cache.put(digestOf('c'), bytesOf('nobody'));
+    assert.equal(reads, 3, 'read once per write');
+    assert.deepEqual((await cache.listBucket('https://example.test/p/one.sb3')).map(row => row.key), [digestOf('a')]);
+    assert.deepEqual((await cache.listBucket('https://example.test/p/two.sb3')).map(row => row.key), [digestOf('b')]);
+    assert.deepEqual((await cache.listBucket('shared')).map(row => row.key), [digestOf('c')]);
+    await cache.close();
+});
+
+test('a function appURI still leaves catalog digests shared', async () => {
+    const cache = realCache({appURI: () => 'https://example.test/p/one.sb3', sharedDigests: new Set([digestOf('b')])});
+    await cache.put(digestOf('b'), bytesOf('catalog'));
+    assert.deepEqual((await cache.listBuckets()).map(row => row.bucket), ['shared']);
+    await cache.close();
+});
+
+test('an appURI that is neither a string nor a function is rejected', async () => {
+    assert.throws(() => createIndexedDBContentCache({indexedDB: stubIndexedDB(() => {}),
+        appURI: 42 as unknown as string}), /Invalid/);
+    const cache = realCache({appURI: () => 42});
+    await assert.rejects(cache.put(digestOf('a'), bytesOf('one')), /appURI/);
+    await cache.close();
+});
