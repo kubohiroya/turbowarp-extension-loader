@@ -242,7 +242,9 @@ do.
 `prepareCatalogExtensionChanges` and `prepareExtensionAddition` take a `uri` option, which is how
 a project gets its first address and how it moves to one the author chose. Saying nothing keeps
 the address the project already has, and `readProjectAuthoringState` reports that address, so a
-host can tell a first save from a later one before deciding. Whether to assign one is the host's
+host can tell a first save from a later one before deciding. A project opened through
+`./project-codec` whose Manifest has no address is given one at save time with
+`assignProjectURI` (see "SB3 codec"). Whether to assign one is the host's
 call: only the host knows whether the author chose an address or whether this is a first save
 that needs a default.
 
@@ -296,6 +298,23 @@ Wire the Loader inside a host feature flag that is fixed at startup and off by d
 `./project-codec` provides `createProjectIO({zip: JSZip, ...limits})` and `inspectZip(bytes, limits)`. The GUI does not interpret the Manifest; it wires `prepare` → `activate(context)` together with `restoreJSON` / `restoreFiles` / `restoreArchive`. Pass the same `embeddedReader` instance to the Loader ports.
 
 `prepare` accepts a JSON object, a string, UTF-8 bytes, an ArrayBuffer, a Blob and an SB3 ZIP, and returns `{manifest, input, context}`. When a Manifest is present, the core validates it and strips `extensionURLs` for Plus IDs in legacy input to prevent automatic URL execution. The IDs themselves remain for the GUI's registration hook. On save it restores the Manifest, the original Plus URL metadata, embedded bytes, unknown ZIP entries and unknown top-level metadata. `restoreArchive` assumes the GUI's `toJSON` hook has already restored `project.json`.
+
+`assignProjectURI(context, uri, {replace})` returns a new context whose Manifest carries `uri`, for
+the restore calls that follow. It is how a project whose Manifest has no address gets one when it is
+first saved: the host keeps the context it returns, so every later save carries the same address.
+The address follows the same rule as the `uri` option of `prepare*` (`INVALID_PROJECT_URI` unless
+HTTPS without credentials or fragment) and is recorded normalized. **An address the project already
+has is never replaced unless `replace: true` says so**: a different one is refused with
+`PROJECT_URI_CONFLICT`, and the same one returns the context unchanged. The context passed in stays
+valid and unchanged, and a `null` context (no Manifest) is refused, since there is nothing to carry
+the address.
+
+```js
+let saved = prepared.context;
+// at save time, only when prepared.manifest has no uri:
+if (saved && !prepared.manifest.uri) saved = io.assignProjectURI(saved, defaultProjectURI(location.origin, createProjectUUID()));
+io.restoreJSON(json, saved);
+```
 
 Unsupported formats are ZIP64, multidisk, encryption, compression other than STORE/DEFLATE, non-ASCII entry names that are not UTF-8, and the Unicode path extra field. The default limits are 64 MiB for the archive and for total expansion, 16 MiB per entry, 32 MiB for `project.json`, 4096 entries, and a compression ratio of 1000. The limits are configurable through the host's startup settings. A ZIP without a Manifest goes through the same safety checks, and the original input is returned unchanged once it passes. As a result, an unsupported ZIP that the previous VM accepted is rejected while the flag is on. With the flag off, the codec is not called at all.
 
