@@ -149,3 +149,56 @@ test('arbitrary preserved ZIP names cannot mutate the serialized file map protot
     }
     assert.throws(() => inspectZip(new Uint8Array(), {maxArchiveBytes: NaN}), /Invalid maxArchiveBytes/);
 });
+
+test('a project without an address gets one at its first save and keeps it on the next', async () => {
+    const io = createProjectIO({zip: Zip});
+    const prepared = await io.prepare(await fixture());
+    assert.equal(prepared.manifest!.uri, undefined);
+    const uri = 'https://example.test/turbowarp-plus-projects/66/66aa/0193f0a1-2b3c-7d4e-8f01-2233445566aa.sb3';
+    const saved = io.assignProjectURI(prepared.context!, uri);
+    assert.notEqual(saved, prepared.context);
+    for (const json of [io.restoreJSON('{"targets":[]}', saved), io.restoreJSON('{"targets":[],"extensions":[]}', saved)]) {
+        const project = JSON.parse(json);
+        assert.equal(project.turboWarpPlus.uri, uri);
+        assert.equal(project.turboWarpPlus.extensions[0].id, 'sample');
+    }
+    const files = io.restoreFiles({'project.json': new TextEncoder().encode('{"targets":[]}')}, saved);
+    assert.equal(decode(files['project.json']).turboWarpPlus.uri, uri);
+    assert.deepEqual(files['extensions/sample.js'], code);
+    // The context passed in is left as it was.
+    assert.equal(JSON.parse(io.restoreJSON('{"targets":[]}', prepared.context)).turboWarpPlus.uri, undefined);
+    // Asking for the same address again changes nothing.
+    assert.equal(io.assignProjectURI(saved, uri), saved);
+    // The saved project reopens with that address.
+    const archive = new Zip().file('project.json', io.restoreJSON('{"targets":[]}', saved));
+    io.restoreArchive(archive, saved);
+    const reopened = await io.prepare(await archive.generateAsync({type: 'uint8array'}));
+    assert.equal(reopened.manifest!.uri, uri);
+});
+
+test('an address a project has is replaced only when asked', async () => {
+    const io = createProjectIO({zip: Zip});
+    const first = 'https://example.test/p/first.sb3';
+    const prepared = await io.prepare(await fixture({targets: [], turboWarpPlus: {...manifest, uri: first}}));
+    assert.equal(prepared.manifest!.uri, first);
+    assert.throws(() => io.assignProjectURI(prepared.context!, 'https://example.test/p/second.sb3'), hasCode('PROJECT_URI_CONFLICT'));
+    assert.throws(() => io.assignProjectURI(prepared.context!, 'https://example.test/p/second.sb3', {replace: false}), hasCode('PROJECT_URI_CONFLICT'));
+    assert.equal(io.assignProjectURI(prepared.context!, first), prepared.context);
+    const moved = io.assignProjectURI(prepared.context!, 'https://example.test/p/second.sb3', {replace: true});
+    assert.equal(JSON.parse(io.restoreJSON('{"targets":[]}', moved)).turboWarpPlus.uri, 'https://example.test/p/second.sb3');
+    assert.equal(JSON.parse(io.restoreJSON('{"targets":[]}', prepared.context)).turboWarpPlus.uri, first);
+});
+
+test('an address is checked like every other project address before it is assigned', async () => {
+    const io = createProjectIO({zip: Zip});
+    const prepared = await io.prepare(await fixture());
+    for (const uri of ['http://example.test/p.sb3', 'https://user:pw@example.test/p.sb3', 'https://example.test/p.sb3#x',
+        'not a url', '', 42 as unknown as string]) {
+        assert.throws(() => io.assignProjectURI(prepared.context!, uri), hasCode('INVALID_PROJECT_URI'), String(uri));
+    }
+    // Normalized as the Manifest would record it.
+    const saved = io.assignProjectURI(prepared.context!, 'https://EXAMPLE.test/p.sb3');
+    assert.equal(JSON.parse(io.restoreJSON('{"targets":[]}', saved)).turboWarpPlus.uri, 'https://example.test/p.sb3');
+    assert.throws(() => io.assignProjectURI(null as unknown as object, 'https://example.test/p.sb3'), /no address/);
+    assert.throws(() => io.assignProjectURI({}, 'https://example.test/p.sb3'), /Unknown project context/);
+});

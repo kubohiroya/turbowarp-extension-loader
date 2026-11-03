@@ -151,6 +151,17 @@ await cache.deleteBucket(manifest.uri);    // 手放す。他が参照してい�
 ごとに読むので、カタログの読み込みに合わせて埋めていけます。どの作品を開いているか言えないホスト
 は、すべてを shared に入れます。名前を推測するのは、無いと認めるより悪いからです。
 
+作品を開き直しても1つのキャッシュを使い続けるホスト（たとえば VM ごとに1つ）は、`appURI` に
+関数を渡します。`sharedDigests` と同じく書き込みごと（`put` を呼んだとき）に読むので、各書き込みは
+その時点で開いている作品の下に入り、関数が `undefined` を返した書き込みは shared に入ります。
+文字列を渡せば、これまでどおりキャッシュの寿命の間ずっと1つの作品を指します。
+
+```js
+let openProject;                           // いま開いている作品の URI。無ければ undefined
+const cache = createIndexedDBContentCache({appURI: () => openProject, sharedDigests: catalogDigests});
+// 読み込むたびに: openProject = prepared.manifest?.uri;
+```
+
 バケットを手放すと claim が落ち、**他が参照していない**バイト列だけが回収されます。2回参照されて
 いる1つの実体は残ります。もう一方の作品は失うことを求めていません。容量超過で追い出すときは
 claim も一緒に落ちるので、バケットが「もう無いもの」を並べることはありません。
@@ -228,7 +239,8 @@ Manifest は `uri` を持てます。その作品をダウンロードできる�
 `prepareCatalogExtensionChanges` と `prepareExtensionAddition` は `uri` を受け取ります。作品が
 最初の住所を得るのも、作者が選んだ住所へ移るのも、この経路です。何も言わなければ作品が持って
 いる住所がそのまま残り、`readProjectAuthoringState` がその住所を報告するので、ホストは初回保存
-かどうかを決める前に見分けられます。割り当てるかどうかはホストの判断です。作者が住所を選んだ
+かどうかを決める前に見分けられます。`./project-codec` で開いた作品の Manifest に住所が
+無ければ、保存のときに `assignProjectURI` で与えます（「SB3 codec」を参照）。割り当てるかどうかはホストの判断です。作者が住所を選んだ
 のか、既定が必要な初回保存なのかを知っているのはホストだけだからです。
 
 `./project-authoring` の `createProjectUUID` と `defaultProjectURI` が、作者が住所を選んで
@@ -280,6 +292,22 @@ npm run check
 `./project-codec` は `createProjectIO({zip: JSZip, ...limits})` と `inspectZip(bytes, limits)` を提供します。GUI は Manifest を解釈せず、`prepare` → `activate(context)` と `restoreJSON` / `restoreFiles` / `restoreArchive` を接続します。`embeddedReader` は同じインスタンスを Loader ports に渡します。
 
 `prepare` は JSON object / string / UTF-8 bytes / ArrayBuffer / Blob と SB3 ZIP を受け取り、`{manifest, input, context}` を返します。Manifest があれば core で検証し、legacy input の Plus ID に対する `extensionURLs` を除去して自動 URL 実行を防ぎます。ID 自体は GUI の登録 hook 用に残します。保存時は Manifest・元の Plus URL metadata・embedded bytes・未知の ZIP entry・未知の top-level metadata を復元します。`restoreArchive` は GUI の `toJSON` hook が `project.json` を復元済みであることを前提とします。
+
+`assignProjectURI(context, uri, {replace})` は、Manifest が `uri` を持つ新しい context を返し、
+以後の restore に使います。Manifest に住所の無い作品は、これで最初の保存のときに住所を得ます。
+ホストが返された context を保てば、その後の保存でも同じ住所が入ります。住所は `prepare*` の
+`uri` と同じ規則で検証し（HTTPS で、資格情報もフラグメントも無いこと。違えば
+`INVALID_PROJECT_URI`）、正規化した形で記録します。**作品が既に持っている住所は、
+`replace: true` と言わない限り置き換えません**。違う住所は `PROJECT_URI_CONFLICT` で拒否し、
+同じ住所なら context をそのまま返します。渡した context は変わらず有効で、`null` の context
+（Manifest が無い）は住所を載せる先が無いので拒否します。
+
+```js
+let saved = prepared.context;
+// 保存のとき、prepared.manifest が uri を持たない場合だけ:
+if (saved && !prepared.manifest.uri) saved = io.assignProjectURI(saved, defaultProjectURI(location.origin, createProjectUUID()));
+io.restoreJSON(json, saved);
+```
 
 未対応形式は ZIP64、multidisk、暗号化、STORE/DEFLATE 以外、UTF-8 以外の非 ASCII entry 名、Unicode path extra field です。既定上限は archive と全展開量64 MiB、1 entry16 MiB、project.json 32 MiB、4096 entry、圧縮比1000です。上限はホスト起動設定で変更できます。Manifest のない ZIP もこの安全検査を受け、通過後は元 input をそのまま返します。このため、従来 VM が許していた未対応 ZIP もフラグ有効時には拒否されます。フラグ OFF では codec 自体を呼びません。
 

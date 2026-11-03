@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+Two additions a host needs to give a project an address at save time and to keep one cache across
+projects. Both are additive: the string form of `appURI`, every existing method and every default
+behave as before.
+
+- `createIndexedDBContentCache({appURI})` also accepts `() => string | undefined`, read at each
+  write like `sharedDigests`, so a host that keeps one cache while projects are reopened files each
+  write under the project open at that moment. `undefined` files the write as shared, as a missing
+  `appURI` always has. An `appURI` that is neither a string nor a function is now refused with
+  `Invalid IndexedDB cache options` instead of being used as a bucket name.
+- `ProjectIO.assignProjectURI(context, uri, {replace})` in `./project-codec` returns a new context
+  whose Manifest carries `uri`, so a project whose Manifest has no address can be given one at its
+  first save and keep it on later saves. The address is checked like the `uri` option of `prepare*`
+  (`INVALID_PROJECT_URI`). An existing different address is refused with the new code
+  `PROJECT_URI_CONFLICT` unless `replace: true`; the same address returns the context unchanged.
+
 ## 0.7.0
 
 Released on 2026-11-03. A classifier a host needs before offering "try again" after a failed

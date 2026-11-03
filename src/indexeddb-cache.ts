@@ -31,8 +31,12 @@ export interface IndexedDBContentCacheOptions {
      * Without one, everything is filed as shared: a host that cannot say which project it is
      * opening cannot have per-project accounting, and guessing a name would be worse than
      * admitting there is none.
+     *
+     * A host that keeps one cache while projects are opened and closed passes a function instead:
+     * it is read at the time of each write, like `sharedDigests`, so each write is filed under the
+     * project open at that moment. A function that returns `undefined` files that write as shared.
      */
-    appURI?: string;
+    appURI?: string | (() => string | undefined);
     /**
      * Digests that belong to no one project, read at the time of each write.
      *
@@ -89,7 +93,16 @@ export function createIndexedDBContentCache({
     if (!indexedDB || typeof indexedDB.open !== 'function') throw new Error('IndexedDB unavailable');
     if (typeof databaseName !== 'string' || !databaseName || !Number.isSafeInteger(maxBytes) || maxBytes < 1 ||
         !Number.isSafeInteger(maxDecompressedBytes) || maxDecompressedBytes < 1 ||
-        typeof now !== 'function') throw new TypeError('Invalid IndexedDB cache options');
+        typeof now !== 'function' ||
+        (appURI !== undefined && typeof appURI !== 'string' && typeof appURI !== 'function')) {
+        throw new TypeError('Invalid IndexedDB cache options');
+    }
+    /** The project a write is filed under, read when it happens. */
+    function currentAppURI(): string | undefined {
+        const uri = typeof appURI === 'function' ? appURI() : appURI;
+        if (uri !== undefined && typeof uri !== 'string') throw new TypeError('appURI must return a string or undefined');
+        return uri;
+    }
 
     let dbPromise: Promise<IDBDatabase> | undefined;
     function open(): Promise<IDBDatabase> {
@@ -230,11 +243,14 @@ export function createIndexedDBContentCache({
             if (!keyValid(key) || !validBytes(bytes)) throw new TypeError('Cache content requires a SHA-256 key and bytes');
             if (signal?.aborted) throw signal.reason;
             if (bytes.byteLength > maxDecompressedBytes) throw new RangeError('Cache input exceeds decompressed size limit');
+            // Read when put() is called, not after compressing: the project open now is the one
+            // these bytes were fetched for, even if another is opened before the write lands.
+            const uri = currentAppURI();
             const originalBytes = bytes.byteLength;
             const compressed = await gzipBytes(bytes);
             if (signal?.aborted) throw signal.reason;
             const db = await open();
-            const bucket = appURI === undefined || sharedDigests?.has(key) ? SHARED_BUCKET : appURI;
+            const bucket = uri === undefined || sharedDigests?.has(key) ? SHARED_BUCKET : uri;
             return transaction(db, 'readwrite', (store, _set, tx) => {
                 const usage = tx.objectStore('usage');
                 const time = now();

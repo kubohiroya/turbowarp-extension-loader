@@ -1,4 +1,4 @@
-import {discoverManifest, LoaderError, type Manifest} from './index.js';
+import {discoverManifest, LoaderError, validateManifest, type Manifest} from './index.js';
 import type {ProjectJSON} from './project-data.js';
 import {DEFAULT_ENTRY_BYTES, DEFAULT_PROJECT_JSON_BYTES, DEFAULT_TOTAL_BYTES} from './limits.js';
 
@@ -40,6 +40,21 @@ export interface ProjectIO {
     restoreJSON<T extends string | Record<string, unknown>>(json: T, context: ProjectContext | null): T;
     restoreFiles(files: Record<string, Uint8Array>, context: ProjectContext | null): Record<string, Uint8Array>;
     restoreArchive<T extends ZipArchive>(archive: T, context: ProjectContext | null): T;
+    /**
+     * A context like `context` whose Manifest carries `uri`, for the restore calls that follow.
+     *
+     * This is how a project whose Manifest has no address gets one when it is first saved, and
+     * keeps it on every later save: the host holds on to the context this returns. The address
+     * follows the same rule as the `uri` option of `prepareExtensionAddition` and
+     * `prepareCatalogExtensionChanges` (`INVALID_PROJECT_URI` unless HTTPS without credentials or
+     * fragment), and comes back normalized in the Manifest.
+     *
+     * An address the project already has is never replaced unless `replace` says so: a different
+     * one is refused with `PROJECT_URI_CONFLICT`, and the same one returns `context` itself. The
+     * context passed in is left as it was. A project with no Manifest (a `null` context) has no
+     * address to carry, and is refused.
+     */
+    assignProjectURI(context: ProjectContext, uri: string, options?: {replace?: boolean}): ProjectContext;
 }
 
 /** The JSZip entry members the codec reads; the internal stream reports the actual inflated bytes. */
@@ -310,6 +325,22 @@ export function createProjectIO({zip: Zip, ...options}: ArchiveLimits & {zip?: Z
             // The GUI toJSON hook has already restored project.json synchronously.
             for (const [name, bytes] of state.files) if (name !== 'project.json' && (!archive.file(name) || name.startsWith('extensions/'))) archive.file(name, new Uint8Array(bytes), {dir: name.endsWith('/'), createFolders: false});
             return archive;
+        },
+        assignProjectURI(context: ProjectContext, uri: string, {replace = false}: {replace?: boolean} = {}): ProjectContext {
+            const state = get(context);
+            if (!state) throw new TypeError('A project without a manifest has no address to assign');
+            // The one address rule, through the one place that applies it.
+            const address = validateManifest({schemaVersion: 1, uri, extensions: []}).uri!;
+            const current = state.manifest.uri;
+            if (current === address) return context;
+            // Saying nothing keeps the address a project has; replacing it has to be asked for.
+            if (current !== undefined && replace !== true) {
+                throw new LoaderError('PROJECT_URI_CONFLICT', 'This project already has a different address');
+            }
+            const manifest: Manifest = Object.freeze({schemaVersion: 1, uri: address, extensions: state.manifest.extensions});
+            const next: ProjectContext = Object.freeze({});
+            contexts.set(next, {manifest, project: state.project, files: state.files});
+            return next;
         }
     });
 }
