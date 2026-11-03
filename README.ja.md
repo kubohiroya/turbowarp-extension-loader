@@ -235,11 +235,12 @@ Manifest は `uri` を持てます。その作品をダウンロードできる�
 いないときに与える住所を組みます。
 
 ```js
-const uri = defaultProjectURI(location.origin + location.pathname, createProjectUUID());
+const uri = defaultProjectURI(location.origin, createProjectUUID());
 ```
 
-オリジンはエディター自身のもので、配信していない host を名乗ることはありません。この住所は作品
-を人に渡すとき SB3 の中に入って一緒に移動するからです。識別子は UUID version 7 なので、初回保存
+オリジンはエディターをブラウザーで起動したドメインのもので、パスは付けません（`editor.html` の
+パスを付けると、住所がその下にできてしまいます）。配信していない host を名乗ることはありません。
+この住所は作品を人に渡すとき SB3 の中に入って一緒に移動するからです。識別子は UUID version 7 なので、初回保存
 の時刻順に並びます。2段のディレクトリは UUID の**末尾**から取ります。version 7 の先頭はミリ秒
 時計の上位で、ほとんど動かないので、先頭でシャーディングすると**作られた全作品が1つの
 ディレクトリに入ります**。
