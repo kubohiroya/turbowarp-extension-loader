@@ -16,6 +16,11 @@ export interface ZipEntryMetadata {
     readonly crc: number;
     readonly directory: boolean;
 }
+interface ZipEntrySpan extends ZipEntryMetadata {
+    readonly method: number;
+    readonly offset: number;
+    readonly compressedBytes: number;
+}
 export interface ZipArchive {
     file(name: string): unknown;
     file(name: string, bytes: Uint8Array, options?: {dir?: boolean; createFolders?: boolean}): unknown;
@@ -29,9 +34,19 @@ export interface PreparedProject {
     readonly manifest: Manifest | null;
     readonly input: unknown;
     readonly context: ProjectContext | null;
+    readonly originalArchive?: VerifiedProjectArchive;
+    readonly vmArchive?: VerifiedProjectArchive;
+}
+/** A view of the verified ZIP for readers in the current load. Consumers must treat project as read-only. */
+export interface VerifiedProjectArchive {
+    readonly project: unknown;
+    readonly projectBytes: number;
+    readonly parserText?: string;
+    openZip(): any;
 }
 export interface ProjectIO {
-    prepare(input: unknown, options?: {signal?: AbortSignal}): Promise<PreparedProject>;
+    readonly supportsSharedArchive?: true;
+    prepare(input: unknown, options?: {signal?: AbortSignal; shareArchive?: boolean}): Promise<PreparedProject>;
     activate(context: ProjectContext | null): void;
     readonly embeddedReader: {
         read(path: string, options?: {signal?: AbortSignal; maxBytes?: number}): Promise<Uint8Array>;
@@ -93,9 +108,14 @@ function safeName(name: string): string {
         name.split('/').some((part, index, all) => part === '.' || part === '..' || (!part && index !== all.length - 1))) fail('Unsafe ZIP entry path');
     return name;
 }
-function parseJSON(bytes: Uint8Array, limit: number): unknown {
+function parseJSON(bytes: Uint8Array, limit: number, onText?: (text: string) => void): unknown {
     if (bytes.byteLength > limit) fail('Project JSON exceeds byte limit');
-    try { return JSON.parse(decoder.decode(bytes)); }
+    try {
+        const text = decoder.decode(bytes);
+        const project = JSON.parse(text);
+        onText?.(text);
+        return project;
+    }
     catch (error) { throw new LoaderError('INVALID_PROJECT', 'Project JSON is not valid UTF-8 JSON', undefined, error); }
 }
 function byteView(input: unknown): Uint8Array | null {
@@ -106,6 +126,11 @@ function byteView(input: unknown): Uint8Array | null {
 
 /** Validate the central directory before JSZip normalizes paths or inflates data. */
 export function inspectZip(bytes: Uint8Array, options: ArchiveLimits = {}): Map<string, ZipEntryMetadata> {
+    return new Map([...scanZip(bytes, options)].map(([key, {name, size, crc, directory}]) =>
+        [key, Object.freeze({name, size, crc, directory})]));
+}
+
+function scanZip(bytes: Uint8Array, options: ArchiveLimits): Map<string, ZipEntrySpan> {
     const limits = {...DEFAULTS, ...options};
     for (const key of Object.keys(DEFAULTS) as (keyof typeof DEFAULTS)[]) if (!Number.isSafeInteger(limits[key]) || limits[key] < 1) throw new TypeError(`Invalid ${key}`);
     if (!(bytes instanceof Uint8Array) || bytes.length > limits.maxArchiveBytes || bytes.length < 22) fail('Invalid or oversized ZIP');
@@ -119,7 +144,7 @@ export function inspectZip(bytes: Uint8Array, options: ArchiveLimits = {}): Map<
     if (end < 0 || u16(end + 4) || u16(end + 6) || u16(end + 8) !== u16(end + 10)) fail('Missing or multidisk ZIP directory');
     const count = u16(end + 10), length = u32(end + 12), start = u32(end + 16);
     if (count === 65535 || start === 0xffffffff || length === 0xffffffff || count > limits.maxEntries || start + length !== end) fail('Unsupported ZIP64 or invalid directory bounds');
-    const entries = new Map<string, ZipEntryMetadata>(), spans: [number, number][] = [];
+    const entries = new Map<string, ZipEntrySpan>(), spans: [number, number][] = [];
     let cursor = start, total = 0;
     for (let i = 0; i < count; i++) {
         if (cursor + 46 > end || u32(cursor) !== 0x02014b50) fail('Invalid central directory entry');
@@ -150,7 +175,7 @@ export function inspectZip(bytes: Uint8Array, options: ArchiveLimits = {}): Map<
             bytes.subarray(local + 30, local + 30 + nameLength).some((byte, index) => byte !== rawName[index])) fail('Conflicting local ZIP header');
         if (!(flags & 8) && (u32(local + 14) !== crc || u32(local + 18) !== compressed || u32(local + 22) !== size)) fail('Conflicting local ZIP sizes');
         spans.push([local, data + compressed]);
-        entries.set(name, Object.freeze({name, size, crc, directory: name.endsWith('/')}));
+        entries.set(name, {name, size, crc, directory: name.endsWith('/'), method, offset: data, compressedBytes: compressed});
         cursor = next;
     }
     if (cursor !== end) fail('Unexpected central directory bytes');
@@ -192,11 +217,76 @@ function boundedEntry(entry: ZipEntry, metadata: ZipEntryMetadata, signal?: Abor
     });
 }
 
+async function inflateLargeEntry(bytes: Uint8Array, metadata: ZipEntrySpan, signal?: AbortSignal) {
+    if (metadata.method !== 8 || metadata.compressedBytes < 256 * 1024 || typeof DecompressionStream !== 'function') return;
+    let inflater: DecompressionStream;
+    try { inflater = new DecompressionStream('deflate-raw'); }
+    catch { return; }
+
+    const end = metadata.offset + metadata.compressedBytes;
+    let offset = metadata.offset;
+    const source = new ReadableStream<BufferSource>({
+        pull(controller) {
+            if (offset === end) return controller.close();
+            const next = Math.min(offset + 16 * 1024, end);
+            // Bound each write to the inflater even if the archive lied about its expansion.
+            controller.enqueue(bytes.subarray(offset, next) as Uint8Array<ArrayBuffer>);
+            offset = next;
+        }
+    });
+    const reader = source.pipeThrough(inflater).getReader();
+    const abort = () => { void reader.cancel().catch(() => {}); };
+    signal?.addEventListener('abort', abort, {once: true});
+    try {
+        cancelled(signal);
+        const output = new Uint8Array(metadata.size);
+        let size = 0;
+        let crc = -1;
+        for (;;) {
+            let chunk;
+            try { chunk = await reader.read(); }
+            catch {
+                cancelled(signal);
+                // Use the existing decoder for streams the native backend cannot read.
+                return;
+            }
+            cancelled(signal);
+            if (chunk.done) break;
+            if (size + chunk.value.length > output.length) fail('Actual ZIP expansion exceeds declared size');
+            output.set(chunk.value, size);
+            size += chunk.value.length;
+            crc = crcUpdate(crc, chunk.value);
+        }
+        if (size !== metadata.size || ((crc ^ -1) >>> 0) !== metadata.crc) fail('ZIP size or CRC mismatch');
+        return output;
+    } finally {
+        signal?.removeEventListener('abort', abort);
+        abort();
+    }
+}
+
 /** ZIP implementation is injected; all manifest/archive policy remains in the core. */
 export function createProjectIO({zip: Zip, ...options}: ArchiveLimits & {zip?: ZipConstructor} = {}): ProjectIO {
     const limits = {...DEFAULTS, ...options};
     for (const key of Object.keys(DEFAULTS) as (keyof typeof DEFAULTS)[]) if (!Number.isSafeInteger(limits[key]) || limits[key] < 1) throw new TypeError(`Invalid ${key}`);
     const contexts = new WeakMap<ProjectContext, ProjectState>();
+    const archiveView = (project: unknown, text: string, files: Map<string, Uint8Array>, json: Uint8Array,
+        rewritten = false): VerifiedProjectArchive =>
+        Object.freeze({
+            project,
+            projectBytes: json.byteLength,
+            // The Scratch parser strips escaped backspaces before parsing. Let it handle those archives.
+            parserText: rewritten || /\\(?:b|u0008)/.test(text) ? text : undefined,
+            openZip() {
+                const archive = new Zip!();
+                for (const [name, content] of files) {
+                    // JSZip can return a view of stored bytes. Keep readers independent of the verified originals.
+                    archive.file(name, name === 'project.json' ? json.slice() : content.slice(),
+                        {dir: name.endsWith('/'), createFolders: false});
+                }
+                return archive;
+            }
+        });
     let active: ProjectContext | null = null;
     const get = (context: ProjectContext | null | undefined): ProjectState | null => {
         if (context === null || context === undefined) return null;
@@ -224,13 +314,15 @@ export function createProjectIO({zip: Zip, ...options}: ArchiveLimits & {zip?: Z
         return merged(json as ProjectJSON, state) as T;
     }
     return Object.freeze({
-        async prepare(input: unknown, {signal}: {signal?: AbortSignal} = {}): Promise<PreparedProject> {
+        supportsSharedArchive: true,
+        async prepare(input: unknown, {signal, shareArchive = false}: {signal?: AbortSignal; shareArchive?: boolean} = {}): Promise<PreparedProject> {
             cancelled(signal);
             if ((typeof input === 'string' && input.length > limits.maxProjectBytes) ||
                 ((input instanceof Uint8Array || input instanceof ArrayBuffer) && input.byteLength > limits.maxArchiveBytes)) {
                 fail('Invalid or oversized project input');
             }
             let bytes: Uint8Array | null | undefined, project: unknown, files = new Map<string, Uint8Array>();
+            let originalArchive: VerifiedProjectArchive | undefined;
             if (typeof input === 'string') project = parseJSON(encoder.encode(input), limits.maxProjectBytes);
             else if (input instanceof Blob) {
                 if (input.size > limits.maxArchiveBytes) fail('Input exceeds byte limit');
@@ -238,18 +330,25 @@ export function createProjectIO({zip: Zip, ...options}: ArchiveLimits & {zip?: Z
             } else bytes = byteView(input);
             if (bytes) {
                 if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
-                    const metadata = inspectZip(bytes, limits);
+                    const metadata = scanZip(bytes, limits);
                     if (!Zip || typeof Zip.loadAsync !== 'function') throw new TypeError('A compatible JSZip constructor is required');
                     const archive = await Zip.loadAsync(bytes, {checkCRC32: false, createFolders: false});
                     for (const [name, meta] of metadata) {
                         cancelled(signal);
                         const entry: ZipEntry | undefined = archive.files[name];
                         if (!entry || entry.name !== name || Boolean(entry.dir) !== meta.directory) fail('ZIP parser changed entry identity');
-                        const content = await boundedEntry(entry, meta, signal);
+                        const native = shareArchive ? await inflateLargeEntry(bytes, meta, signal) : undefined;
+                        const content = native ?? await boundedEntry(entry, meta, signal);
                         files.set(name, content);
                     }
                     // inspectZip guarantees a project.json entry, and every entry was read above.
-                    project = parseJSON(files.get('project.json')!, limits.maxProjectBytes);
+                    const json = files.get('project.json')!;
+                    // Review and the Scratch parser have their own UTF-8 and entry selection rules.
+                    const shareable = shareArchive && !(json[0] === 0xef && json[1] === 0xbb && json[2] === 0xbf) &&
+                        ![...files.keys()].some(name => /^[^/]+\/project\.json$/.test(name));
+                    let text = '';
+                    project = parseJSON(json, limits.maxProjectBytes, shareable ? value => { text = value; } : undefined);
+                    if (shareable) originalArchive = archiveView(project, text, files, json);
                 } else project = parseJSON(bytes, limits.maxProjectBytes);
             } else if (!project) {
                 if (!input || typeof input !== 'object') throw new LoaderError('INVALID_PROJECT', 'Unsupported project input');
@@ -257,7 +356,8 @@ export function createProjectIO({zip: Zip, ...options}: ArchiveLimits & {zip?: Z
             }
             cancelled(signal);
             const manifest = discoverManifest(project);
-            if (!manifest) return {manifest: null, input, context: null};
+            if (!manifest) return {manifest: null, input, context: null,
+                ...(originalArchive && {originalArchive, vmArchive: originalArchive})};
             // A manifest is only discovered on a plain object; the fields used below are checked first.
             const data = project as ProjectJSON;
             if (data.extensions !== undefined && (!Array.isArray(data.extensions) || data.extensions.some(id => typeof id !== 'string'))) throw new LoaderError('INVALID_PROJECT', 'Project extensions must be an ID array');
@@ -273,15 +373,18 @@ export function createProjectIO({zip: Zip, ...options}: ArchiveLimits & {zip?: Z
             legacy.extensionURLs = {...(data.extensionURLs || {})};
             for (const id of ids) delete legacy.extensionURLs[id];
             let prepared: unknown;
+            let vmArchive: VerifiedProjectArchive | undefined;
             if (files.size) {
                 // Entries exist only when a ZIP was read, which required a ZIP implementation.
                 const archive = new Zip!();
                 for (const [name, content] of files) archive.file(name, content, {dir: name.endsWith('/'), createFolders: false});
-                archive.file('project.json', JSON.stringify(legacy));
+                const text = JSON.stringify(legacy);
+                archive.file('project.json', text);
                 prepared = await archive.generateAsync({type: 'uint8array', compression: 'STORE'});
+                if (originalArchive) vmArchive = archiveView(legacy, text, files, encoder.encode(text), true);
             } else prepared = typeof input === 'object' && !bytes && !(input instanceof Blob) ? legacy : JSON.stringify(legacy);
             cancelled(signal);
-            return {manifest, input: prepared, context};
+            return {manifest, input: prepared, context, ...(originalArchive && {originalArchive, vmArchive})};
         },
         activate(context: ProjectContext | null) { get(context); active = context; },
         embeddedReader: Object.freeze({

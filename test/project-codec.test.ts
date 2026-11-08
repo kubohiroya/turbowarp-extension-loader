@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
-import {createHash} from 'node:crypto';
+import {createHash, randomBytes} from 'node:crypto';
 import {createProjectIO, inspectZip} from '@kubohiroya/turbowarp-extension-loader/project-codec';
 const require = createRequire(import.meta.url);
 const Zip = require('@turbowarp/jszip');
@@ -57,6 +57,72 @@ test('manifestless project delegates exact original input; contexts cannot be fo
     assert.equal(io.restoreFiles(files, null), files);
 });
 
+test('verified archive views share unchanged JSON and isolate ZIP reads and rewritten extension URLs', async () => {
+    const io = createProjectIO({zip: Zip});
+    const plain = await io.prepare(await fixture({targets: []}), {shareArchive: true});
+    assert.equal(plain.vmArchive, plain.originalArchive);
+    assert.deepEqual(plain.vmArchive!.project, {targets: []});
+    assert.equal(plain.vmArchive!.parserText, undefined);
+
+    const compatibility = await io.prepare(await fixture({targets: [], name: 'old\bname'}), {shareArchive: true});
+    assert.match(compatibility.vmArchive!.parserText!, /\\b/);
+    for (const zip of [new Zip().file('project.json', '\ufeff{"targets":[]}'),
+        new Zip().file('folder/project.json', '{"targets":[]}').file('project.json', '{"targets":[]}')]) {
+        const input = await zip.generateAsync({type: 'uint8array'});
+        const prepared = await io.prepare(input, {shareArchive: true});
+        assert.equal(prepared.input, input);
+        assert.equal(prepared.originalArchive, undefined);
+    }
+
+    const result = await io.prepare(await fixture(), {shareArchive: true});
+    const source = result.originalArchive!.openZip();
+    const vm = result.vmArchive!.openZip();
+    const original = JSON.parse(await source.file('project.json').async('string'));
+    const rewritten = JSON.parse(await vm.file('project.json').async('string'));
+    assert.equal(original.extensionURLs.sample, 'https://untrusted.invalid/a.js');
+    assert.equal(rewritten.extensionURLs.sample, undefined);
+    assert.deepEqual(rewritten, JSON.parse(result.vmArchive!.parserText!));
+    const bytes = await vm.file('extensions/sample.js').async('uint8array');
+    bytes[0] = 0;
+    io.activate(result.context);
+    assert.deepEqual(await io.embeddedReader.read('extensions/sample.js'), code);
+    assert.deepEqual(await source.file('extensions/sample.js').async('uint8array'), code);
+});
+
+test('large DEFLATE entries preserve bytes and enforce CRC and actual expansion with or without native streams', async () => {
+    const content = Uint8Array.from(randomBytes(300 * 1024));
+    const bytes: Uint8Array = await new Zip().file('project.json', '{"targets":[]}')
+        .file('stored.bin', Uint8Array.of(1, 2), {compression: 'STORE'}).file('deflated.bin', content)
+        .generateAsync({type: 'uint8array', compression: 'DEFLATE'});
+    const prepare = (input: Uint8Array) => createProjectIO({zip: Zip}).prepare(input, {shareArchive: true});
+    const read = async () => {
+        const zip = (await prepare(bytes)).vmArchive!.openZip();
+        assert.deepEqual(await zip.file('stored.bin').async('uint8array'), Uint8Array.of(1, 2));
+        assert.deepEqual(await zip.file('deflated.bin').async('uint8array'), content);
+    };
+    await read();
+    const native = Object.getOwnPropertyDescriptor(globalThis, 'DecompressionStream')!;
+    Object.defineProperty(globalThis, 'DecompressionStream', {configurable: true, value: undefined});
+    try { await read(); }
+    finally { Object.defineProperty(globalThis, 'DecompressionStream', native); }
+
+    const mutated = (field: 'crc' | 'size', value: number) => {
+        const bad = bytes.slice();
+        const view = new DataView(bad.buffer);
+        for (let offset = 0; offset < bad.length - 46; offset++) {
+            if (view.getUint32(offset, true) !== 0x02014b50 ||
+                new TextDecoder().decode(bad.subarray(offset + 46, offset + 58)) !== 'deflated.bin') continue;
+            const local = view.getUint32(offset + 42, true);
+            view.setUint32(offset + (field === 'crc' ? 16 : 24), value, true);
+            view.setUint32(local + (field === 'crc' ? 14 : 22), value, true);
+            return bad;
+        }
+        throw Error('Missing DEFLATE fixture entry');
+    };
+    await assert.rejects(prepare(mutated('crc', 0)), /CRC mismatch/);
+    await assert.rejects(prepare(mutated('size', content.length - 1)), /expansion exceeds declared size/);
+});
+
 test('remote-only JSON needs no ZIP dependency and malformed manifest fails closed', async () => {
     const remote = structuredClone(manifest);
     remote.extensions[0].source = {type: 'remote-cacheable', url: 'https://example.org/a.js'};
@@ -86,6 +152,7 @@ test('limits, cancellation, UTF-8 errors and corruption are diagnosed', async ()
         }
     }
     await assert.rejects(createProjectIO({zip: Zip}).prepare(corrupt), /CRC mismatch/);
+    await assert.rejects(createProjectIO({zip: Zip}).prepare(corrupt, {shareArchive: true}), /CRC mismatch/);
 });
 
 test('preflight rejects duplicate paths, traversal, ZIP64, and misleading expansion metadata before loading', async () => {
