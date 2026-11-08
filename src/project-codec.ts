@@ -45,7 +45,7 @@ export interface VerifiedProjectArchive {
     openZip(): any;
 }
 export interface ProjectIO {
-    readonly supportsSharedArchive: true;
+    readonly supportsSharedArchive?: true;
     prepare(input: unknown, options?: {signal?: AbortSignal; shareArchive?: boolean}): Promise<PreparedProject>;
     activate(context: ProjectContext | null): void;
     readonly embeddedReader: {

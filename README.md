@@ -299,6 +299,8 @@ Wire the Loader inside a host feature flag that is fixed at startup and off by d
 
 `prepare` accepts a JSON object, a string, UTF-8 bytes, an ArrayBuffer, a Blob and an SB3 ZIP, and returns `{manifest, input, context}`. When a Manifest is present, the core validates it and strips `extensionURLs` for Plus IDs in legacy input to prevent automatic URL execution. The IDs themselves remain for the GUI's registration hook. On save it restores the Manifest, the original Plus URL metadata, embedded bytes, unknown ZIP entries and unknown top-level metadata. `restoreArchive` assumes the GUI's `toJSON` hook has already restored `project.json`.
 
+With `prepare(input, {shareArchive: true})`, a compatible SB3 also returns `originalArchive` and `vmArchive`. Treat each view's `project` as read-only for that load and call `openZip()` for an independent archive. The VM view includes `parserText` when the caller needs the original parser's compatibility handling. Use the existing input path if the views are absent. Large DEFLATE entries can use the browser's native decompressor, with the same size and CRC checks.
+
 `assignProjectURI(context, uri, {replace})` returns a new context whose Manifest carries `uri`, for
 the restore calls that follow. It is how a project whose Manifest has no address gets one when it is
 first saved: the host keeps the context it returns, so every later save carries the same address.

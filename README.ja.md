@@ -293,6 +293,8 @@ npm run check
 
 `prepare` は JSON object / string / UTF-8 bytes / ArrayBuffer / Blob と SB3 ZIP を受け取り、`{manifest, input, context}` を返します。Manifest があれば core で検証し、legacy input の Plus ID に対する `extensionURLs` を除去して自動 URL 実行を防ぎます。ID 自体は GUI の登録 hook 用に残します。保存時は Manifest・元の Plus URL metadata・embedded bytes・未知の ZIP entry・未知の top-level metadata を復元します。`restoreArchive` は GUI の `toJSON` hook が `project.json` を復元済みであることを前提とします。
 
+`prepare(input, {shareArchive: true})` は、対応する SB3 で `originalArchive` と `vmArchive` も返します。各ビューの `project` はその読み込み内で読み取り専用として扱い、独立した ZIP が必要な場合は `openZip()` を呼びます。VM 側で互換処理を行う場合は `parserText` を既存のパーサーに渡します。ビューが返らない場合は従来の入力経路を使います。大きい DEFLATE 項目はブラウザー標準 API で展開でき、展開後のサイズと CRC は同じ条件で検証します。
+
 `assignProjectURI(context, uri, {replace})` は、Manifest が `uri` を持つ新しい context を返し、
 以後の restore に使います。Manifest に住所の無い作品は、これで最初の保存のときに住所を得ます。
 ホストが返された context を保てば、その後の保存でも同じ住所が入ります。住所は `prepare*` の

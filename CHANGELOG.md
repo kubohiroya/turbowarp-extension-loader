@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0
+
+- `ProjectIO.prepare(input, {shareArchive: true})` can expose verified archive views for the original project and the VM input. Hosts can reuse the parsed document and open independent ZIP readers for the current load.
+- The shared preparation path can use `DecompressionStream('deflate-raw')` for large entries. The codec checks the expanded size and CRC and uses JSZip for unsupported streams and environments.
+
 ## 0.8.0
 
 Released on 2026-11-03. Two additions a host needs to give a project an address at save time and to keep one cache across
