@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.0
+
+- `./scratch-vm` puts the Loader on a scratch-vm: the registration port (`createVMExtensionRegistrar`), the bridge in front of the VM's project loading and saving (`installExtensionLoader`, `editProjectURI`), the extension authoring controller (`createExtensionAuthoringController` and its host map), the default project address (`addressingOrigin`, `createProjectAddresser`) and the preview serialization mark (`withProjectSerialization`, `projectSerializationOptions`). They moved here from the TurboWarp Plus Editor unchanged in behavior, with their tests, which now run against the pinned scratch-vm in this repository.
+- `createExtensionAuthoringController` takes `zip` as a required option. In the Editor it defaulted to the JSZip the Editor bundles; the Loader has no runtime dependency on JSZip, so the host passes the one it bundles.
+
 ## 0.9.0
 
 - `ProjectIO.prepare(input, {shareArchive: true})` can expose verified archive views for the original project and the VM input. Hosts can reuse the parsed document and open independent ZIP readers for the current load.

@@ -1,6 +1,6 @@
 {
   "name": "@kubohiroya/turbowarp-extension-loader",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Host-independent verified TurboWarp Plus extension loading core",
   "keywords": [
     "turbowarp",
@@ -58,6 +58,10 @@
       "types": "./dist/packager.d.ts",
       "default": "./dist/packager.js"
     },
+    "./scratch-vm": {
+      "types": "./dist/scratch-vm/index.d.ts",
+      "default": "./dist/scratch-vm/index.js"
+    },
     "./memory-cache": {
       "types": "./dist/memory-cache.d.ts",
       "default": "./dist/memory-cache.js"
@@ -80,21 +84,24 @@
     "project-authoring.js",
     "project-catalog.js",
     "project-codec.js",
+    "scratch-vm.js",
     "session-trust.js",
     "webpack4.cjs"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p test",
     "build": "node -e \"require('node:fs').rmSync('dist', {recursive: true, force: true})\" && tsc -p tsconfig.build.json",
-    "test": "npm run build && node --test test/*.test.ts",
+    "test": "npm run build && npm run typecheck:scratch-vm && node --test test/*.test.ts test/scratch-vm/*.test.ts",
     "pack:check": "npm pack --dry-run --ignore-scripts",
     "check": "npm run typecheck && npm test && npm run pack:check",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "typecheck:scratch-vm": "tsc --noEmit -p test/scratch-vm"
   },
   "devDependencies": {
     "@turbowarp/jszip": "3.12.0",
     "@types/node": "26.6.6",
     "fake-indexeddb": "6.2.7",
+    "scratch-vm": "github:kubohiroya/scratch-vm#3ac5fb7052ffc371f1e615245fcc15d61a368237",
     "typescript": "6.0.3"
   },
   "publishConfig": {
