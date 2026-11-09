@@ -65,7 +65,7 @@ await loader.unload();
 
 登録ポートは `begin({signal})` → `register(authorizedCode,{signal})` → `commit({signal})` を実装し、どの登録が失敗しても `rollback()` で登録状態を復旧できる必要があります。`register()` は実際の `getInfo().id` と対応する登録結果 `{id}` を返します。ホストは既存 VM 内の ID 競合も拒否してください。`unload(ids)` は依存の逆順で呼ばれます。契約は TypeScript の型（`dist/*.d.ts` として公開）に記載しています。
 
-実VMアダプターは `scratch-gui/src/lib/tw-plus-extension-registrar.js` が所有します。VMへ追加する `getExtensionServicePort()` と組み合わせ、同一VMの登録テーブル・dispatchサービスの所有権を追跡してrollback/unloadします。Editorと別バンドルのPackagerもVM内の同じサービスを利用します。標準VMを使用する同一バンドルではdispatch同一性を確認し、未対応の別バンドルでは拒否します。Loaderコア自身はVM private APIへ依存しません。
+scratch-vm 用のアダプターは `./scratch-vm` にあります（後述）。そこの registrar は、VMへ追加する `getExtensionServicePort()` と組み合わせ、同一VMの登録テーブル・dispatchサービスの所有権を追跡してrollback/unloadします。Editorと別バンドルのPackagerもVM内の同じサービスを利用します。標準VMを使用する同一バンドルではdispatch同一性を確認し、未対応の別バンドルでは拒否します。Loaderコア自身はVM private APIへ依存しません。
 
 ## セキュリティ境界と制約
 
@@ -280,7 +280,7 @@ npm ci --ignore-scripts
 npm run check
 ```
 
-`npm run check` は `src` と `test` の型検査、テスト、パッケージの dry-run を順に実行します。`npm test` は `dist/` をビルドしてから、パッケージ名経由（`exports` 解決）で公開APIを検証します。テストは Node.js の型除去実行で TypeScript のまま動かし、不正値が拒否されることを確かめるケースでは、公開型をゆるめる代わりにその値をキャストで明示的に渡します。Node.js >=26 の組み込み test runner / Web Crypto を使い、Loader 本体を実行時依存パッケージなしで headless 検証します。ZIP codec の fixture 検証には開発依存の `@turbowarp/jszip` を使います。`test/fixtures/extension.js` はホストに渡すバイト列の fixture で、テスト中に評価しません。実ネットワーク、CORS / CSP、VM の private API、ブラウザー拡張実行の検証とは区別します。
+`npm run check` は `src` と `test` の型検査、テスト、パッケージの dry-run を順に実行します。`npm test` は `dist/` をビルドしてから、パッケージ名経由（`exports` 解決）で公開APIを検証します。テストは Node.js の型除去実行で TypeScript のまま動かし、不正値が拒否されることを確かめるケースでは、公開型をゆるめる代わりにその値をキャストで明示的に渡します。Node.js >=26 の組み込み test runner / Web Crypto を使い、Loader 本体を実行時依存パッケージなしで headless 検証します。ZIP codec の fixture 検証には開発依存の `@turbowarp/jszip` を使います。`test/fixtures/extension.js` はホストに渡すバイト列の fixture で、テスト中に評価しません。`test/scratch-vm/` の `./scratch-vm` の試験は、本物の scratch-vm を動かします。scratch-vm は、TurboWarp Plus Editor の scratch-gui と同じリビジョンを開発依存に固定しています。確かめるのは、本物の登録テーブルと dispatch の上での登録・rollback・unload と、その直列化を通した SB3 の保存と再読込です。これらの試験は型の付いていない VM の代役を作るので、strict なしで型検査します（`test/scratch-vm/tsconfig.json`）。アダプター自体は strict です。実ネットワーク、CORS / CSP、ブラウザー拡張実行の検証とは区別します。
 
 ## 導入と切戻し
 
@@ -320,6 +320,11 @@ io.restoreJSON(json, saved);
 - `./memory-cache` の `createMemoryContentCache` はコピー・容量（既定32 MiB、既定最大サイズの拡張2件分）・TTL・LRUを提供し、コアはヒット時にも内容を再検証します。
 - `withFetchRetry(port, options)` は任意の fetch ポートを上記の有限回の再試行で包み、`isTransientFetchFailure(error)` はその分類器、`isWorthAskingAgain(error)` は失敗した操作を受け取ったホストにやり直しを勧めるべきかを答える判定、`DEFAULT_FETCH_RETRY` は既定値（再試行2回、400 ms から倍々で上限2秒、合計5秒）です。
 - `./webpack4` はGUI/Packager用の同一コアをwebpack 4でビルドするための構成補助です。
+- `./scratch-vm` は、Loader を scratch-vm に載せます。VM の内部に意図して触れるので、VM をバンドルする側が導入し、VM 自身のモジュールのインスタンスを渡します。
+  - `createVMExtensionRegistrar(vm, {vmModules})` は登録のポートです。`vmModules` は、VM 自身の `ScratchCommon`・`createTranslate`・`staticFetch`・central `dispatch` です。ほかから解決した複製は、VM のシングルトンになりません。
+  - `installExtensionLoader(host, loader)` は、VM の作品の読み込みと保存の前に Loader を置きます。VM が拡張機能を読む前に作品の Manifest を検証し、保存をまたいで保ちます。`editProjectURI(vm)` は、開いている作品のアドレスを編集します。
+  - `createExtensionAuthoringController(vm, {zip, ports, ...})` は、作品の拡張機能の追加・設定・削除を VM と直列に行い、変更が失敗したときは元の作品に戻します。`setExtensionAuthoringHost` と `getExtensionAuthoringHost` で、これを使う画面に渡します。
+  - `createProjectAddresser(origin)` は、HTTPS の origin のもとで新しい作品の既定のアドレスを作ります。`withProjectSerialization` は、直列化をプレビューとして印付けます。プレビューにはアドレスを付けません。
 
 実GUI、実Packager 3.14.0の生成HTML、Desktop 1.17.0の互換性はEditor側のE2Eが担当します。標準Desktopや標準WebへLoaderを無断インストールしません。標準Desktopの保存は独自Manifest/ZIPエントリを破棄することを実測しているため、保持対応エディターで保存してください。
 

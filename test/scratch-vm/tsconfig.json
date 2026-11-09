@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    // These tests drive scratch-vm, which publishes no types, through hand-built VM stand-ins and
+    // the real VM's own modules. They came from the TurboWarp Plus Editor, where they were checked
+    // without strict mode, and are checked the same way here. The adapters they test are strict:
+    // the tests see them through the built declarations, as a host does.
+    "strict": false,
+    "paths": {}
+  },
+  "include": ["."],
+  "exclude": []
+}

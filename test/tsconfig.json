@@ -9,5 +9,7 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false
   },
-  "include": ["."]
+  "include": ["."],
+  // The scratch-vm adapter tests build untyped VM stand-ins; they are checked by their own config.
+  "exclude": ["scratch-vm"]
 }
