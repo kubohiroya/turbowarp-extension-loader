@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.0
+
+- `./scratch-vm/runtime` is the part of `./scratch-vm` a host that only plays projects needs: the registrar, the project lifecycle bridge and the preview serialization mark. A built single HTML imports it, so its bundle carries neither the authoring controller nor the default project address. `./scratch-vm` re-exports it, so both entries share one copy of each module and its state.
+
 ## 0.10.0
 
 - `./scratch-vm` puts the Loader on a scratch-vm: the registration port (`createVMExtensionRegistrar`), the bridge in front of the VM's project loading and saving (`installExtensionLoader`, `editProjectURI`), the extension authoring controller (`createExtensionAuthoringController` and its host map), the default project address (`addressingOrigin`, `createProjectAddresser`) and the preview serialization mark (`withProjectSerialization`, `projectSerializationOptions`). They moved here from the TurboWarp Plus Editor unchanged in behavior, with their tests, which now run against the pinned scratch-vm in this repository.

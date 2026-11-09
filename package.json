@@ -1,6 +1,6 @@
 {
   "name": "@kubohiroya/turbowarp-extension-loader",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Host-independent verified TurboWarp Plus extension loading core",
   "keywords": [
     "turbowarp",
@@ -62,6 +62,10 @@
       "types": "./dist/scratch-vm/index.d.ts",
       "default": "./dist/scratch-vm/index.js"
     },
+    "./scratch-vm/runtime": {
+      "types": "./dist/scratch-vm/runtime.d.ts",
+      "default": "./dist/scratch-vm/runtime.js"
+    },
     "./memory-cache": {
       "types": "./dist/memory-cache.d.ts",
       "default": "./dist/memory-cache.js"
@@ -85,6 +89,7 @@
     "project-catalog.js",
     "project-codec.js",
     "scratch-vm.js",
+    "scratch-vm/runtime.js",
     "session-trust.js",
     "webpack4.cjs"
   ],

@@ -43,6 +43,9 @@
       "@kubohiroya/turbowarp-extension-loader/scratch-vm": [
         "./src/scratch-vm/index.ts"
       ],
+      "@kubohiroya/turbowarp-extension-loader/scratch-vm/runtime": [
+        "./src/scratch-vm/runtime.ts"
+      ],
       "@kubohiroya/turbowarp-extension-loader/memory-cache": [
         "./src/memory-cache.ts"
       ],
