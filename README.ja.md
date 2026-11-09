@@ -325,6 +325,7 @@ io.restoreJSON(json, saved);
   - `installExtensionLoader(host, loader)` は、VM の作品の読み込みと保存の前に Loader を置きます。VM が拡張機能を読む前に作品の Manifest を検証し、保存をまたいで保ちます。`editProjectURI(vm)` は、開いている作品のアドレスを編集します。
   - `createExtensionAuthoringController(vm, {zip, ports, ...})` は、作品の拡張機能の追加・設定・削除を VM と直列に行い、変更が失敗したときは元の作品に戻します。`setExtensionAuthoringHost` と `getExtensionAuthoringHost` で、これを使う画面に渡します。
   - `createProjectAddresser(origin)` は、HTTPS の origin のもとで新しい作品の既定のアドレスを作ります。`withProjectSerialization` は、直列化をプレビューとして印付けます。プレビューにはアドレスを付けません。
+  - `./scratch-vm/runtime` は、作品を再生するだけの host に要るもの（registrar・`installExtensionLoader`・`editProjectURI`・直列化の印）だけを出します。配布用の単一 HTML は、これを使うことで authoring とアドレス付けを含みません。
 
 実GUI、実Packager 3.14.0の生成HTML、Desktop 1.17.0の互換性はEditor側のE2Eが担当します。標準Desktopや標準WebへLoaderを無断インストールしません。標準Desktopの保存は独自Manifest/ZIPエントリを破棄することを実測しているため、保持対応エディターで保存してください。
 
