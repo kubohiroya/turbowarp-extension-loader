@@ -101,12 +101,16 @@ function assertHost(vm: ScratchVM) {
     }
 }
 
-function assertAvailable(vm: ScratchVM, id: string) {
+/**
+ * `self`, when given, is the extension object being registered: an extension may publish itself
+ * at `runtime.ext_<id>` from its constructor (a deliberate handoff), which is not a conflict.
+ */
+function assertAvailable(vm: ScratchVM, id: string, self?: object) {
     const prefix = `${id}_`;
     if (vm.extensionManager.isBuiltinExtension(id) || vm.extensionManager._loadedExtensions.has(id) ||
         vm.runtime._blockInfo.some((category: {id: string}) => category.id === id) ||
         TABLES.some(name => Object.keys(vm.runtime[name]).some(key => key.startsWith(prefix))) ||
-        own(vm.runtime, `ext_${id}`)) {
+        (own(vm.runtime, `ext_${id}`) && (self === undefined || vm.runtime[`ext_${id}`] !== self))) {
         throw error('ID_CONFLICT', `Extension ID ${id} is already reserved or registered`);
     }
 }
@@ -305,7 +309,8 @@ export function createVMExtensionRegistrar(vm: ScratchVM, {registrationTimeoutMs
             checkSignal(signal);
             const info = record.object!.getInfo();
             if (info?.id !== authorized.id) throw error('REGISTRATION_ID_MISMATCH', 'Extension getInfo().id differs from its Manifest');
-            assertAvailable(vm, authorized.id);
+            // The pre-execute check guaranteed ext_<id> was absent, so only this object may hold it now.
+            assertAvailable(vm, authorized.id, record.object);
             record.worker = manager.nextExtensionWorker++;
             record.service = `unsandboxed.${record.worker}.${record.id}`;
             services.set(record.service, record.object);
@@ -321,7 +326,11 @@ export function createVMExtensionRegistrar(vm: ScratchVM, {registrationTimeoutMs
                 if (record.service) await release(record);
                 else {
                     try { if (typeof record.object?.dispose === 'function') await record.object.dispose(); }
-                    finally { record.api?.dispose(); }
+                    finally {
+                        record.api?.dispose();
+                        // ext_<id> was absent before execute; remove it only if it is still this object.
+                        if (record.object && runtime[`ext_${record.id}`] === record.object) delete runtime[`ext_${record.id}`];
+                    }
                 }
             });
             if (cleanup) {
