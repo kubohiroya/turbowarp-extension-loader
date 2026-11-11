@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.1
+
+- The registrar accepts an extension that publishes itself at `runtime.ext_<id>` from its constructor (as Camera Source does). The check after evaluation treats that slot as a conflict only when it holds another object, and a failed registration removes it only while it still holds the extension being registered.
+
 ## 0.11.0
 
 - `./scratch-vm/runtime` is the part of `./scratch-vm` a host that only plays projects needs: the registrar, the project lifecycle bridge and the preview serialization mark. A built single HTML imports it, so its bundle carries neither the authoring controller nor the default project address. `./scratch-vm` re-exports it, so both entries share one copy of each module and its state.

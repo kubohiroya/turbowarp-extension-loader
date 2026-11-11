@@ -321,3 +321,47 @@ test('custom extension commands run through the actual TurboWarp compiler compat
         assert.equal(vm.runtime.getOpcodeFunction('realfixture_record'), undefined);
     } finally { clean(vm); }
 });
+
+const selfPublishing = (id = 'realfixture') => `(function(Scratch) {
+    class Ext {
+        constructor() { Scratch.vm.runtime['ext_${id}'] = this; }
+        getInfo() { return {id: '${id}', name: 'Self', blocks: [{opcode: 'value', blockType: Scratch.BlockType.REPORTER, text: 'value'}]}; }
+        value() { return 1; }
+    }
+    Scratch.extensions.register(new Ext());
+})(Scratch);`;
+
+test('an extension that publishes itself at runtime.ext_<id> registers, and rollback removes only that object', async () => {
+    const {vm, loader, manifest} = setup({code: selfPublishing()});
+    try {
+        assert.deepEqual((await loader.load(manifest)).ids, ['realfixture']);
+        const object = vm.runtime.ext_realfixture;
+        assert.ok(object && typeof object.getInfo === 'function');
+        assert.equal(vm.extensionManager.isExtensionLoaded('realfixture'), true);
+        await loader.unload();
+        assert.equal(Object.hasOwn(vm.runtime, 'ext_realfixture'), false);
+    } finally { clean(vm); }
+});
+
+test('a different pre-existing runtime.ext_<id> still conflicts and is left intact', async () => {
+    const {vm, loader, manifest} = setup({code: selfPublishing()});
+    const foreign = {host: true};
+    try {
+        vm.runtime.ext_realfixture = foreign;
+        await assert.rejects(loader.load(manifest), error => hostError(error).cause?.code === 'ID_CONFLICT');
+        assert.equal(vm.runtime.ext_realfixture, foreign);
+    } finally { clean(vm); }
+});
+
+test('a foreign object placed at runtime.ext_<id> during evaluation conflicts and survives rollback', async () => {
+    const code = `(function(Scratch) {
+        Scratch.vm.runtime.ext_realfixture = {foreign: true};
+        Scratch.extensions.register({getInfo() { return {id: 'realfixture', name: 'X', blocks: []}; }});
+    })(Scratch);`;
+    const {vm, loader, manifest} = setup({code});
+    try {
+        await assert.rejects(loader.load(manifest), error => hostError(error).cause?.code === 'ID_CONFLICT');
+        assert.deepEqual(vm.runtime.ext_realfixture, {foreign: true});
+        assert.equal(vm.extensionManager.isExtensionLoaded('realfixture'), false);
+    } finally { clean(vm); }
+});
