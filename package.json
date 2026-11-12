@@ -97,15 +97,18 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p test",
     "build": "node -e \"require('node:fs').rmSync('dist', {recursive: true, force: true})\" && tsc -p tsconfig.build.json",
     "test": "npm run build && npm run typecheck:scratch-vm && node --test test/*.test.ts test/scratch-vm/*.test.ts",
+    "test:browser": "node --test test/browser/*.browser.ts",
     "pack:check": "npm pack --dry-run --ignore-scripts",
     "check": "npm run typecheck && npm test && npm run pack:check",
     "prepare": "npm run build",
     "typecheck:scratch-vm": "tsc --noEmit -p test/scratch-vm"
   },
   "devDependencies": {
+    "@kubohiroya/turbowarp-plus-editor-test-runtime": "0.2.0",
     "@turbowarp/jszip": "3.12.0",
     "@types/node": "26.6.6",
     "fake-indexeddb": "6.2.7",
+    "playwright": "1.64.1",
     "scratch-vm": "github:kubohiroya/scratch-vm#3ac5fb7052ffc371f1e615245fcc15d61a368237",
     "typescript": "6.0.3"
   },

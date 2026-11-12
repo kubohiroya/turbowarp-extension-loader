@@ -287,7 +287,14 @@ npm ci --ignore-scripts
 npm run check
 ```
 
-`npm run check` typechecks `src` and `test`, runs the tests, and packs the tarball as a dry run. `npm test` builds `dist/` and then verifies the public API through the package name, so that `exports` resolution is exercised. The tests run as TypeScript on the Node.js type-stripping runtime; where a case exists to prove that a bad value is refused, it casts that value in deliberately rather than weakening the public types. They use the built-in test runner and Web Crypto of Node.js >=26 to verify the Loader headlessly with no runtime dependency. ZIP codec fixture verification uses the dev dependency `@turbowarp/jszip`. `test/fixtures/extension.js` is a fixture of the bytes handed to the host and is never evaluated during the tests. The `./scratch-vm` tests in `test/scratch-vm/` drive the real scratch-vm, pinned as a dev dependency at the revision the TurboWarp Plus Editor's scratch-gui uses: registration, rollback and unload on its real tables and dispatch, and SB3 save and reopen through its serializer. They are typechecked without strict mode (`test/scratch-vm/tsconfig.json`), because they build untyped VM stand-ins; the adapters themselves are strict. None of this verifies real networking, CORS / CSP, or browser extension execution.
+`npm run check` typechecks `src` and `test`, runs the tests, and packs the tarball as a dry run. `npm test` builds `dist/` and then verifies the public API through the package name, so that `exports` resolution is exercised. The tests run as TypeScript on the Node.js type-stripping runtime; where a case exists to prove that a bad value is refused, it casts that value in deliberately rather than weakening the public types. They use the built-in test runner and Web Crypto of Node.js >=26 to verify the Loader headlessly with no runtime dependency. ZIP codec fixture verification uses the dev dependency `@turbowarp/jszip`. `test/fixtures/extension.js` is a fixture of the bytes handed to the host and is never evaluated during the tests. The `./scratch-vm` tests in `test/scratch-vm/` drive the real scratch-vm, pinned as a dev dependency at the revision the TurboWarp Plus Editor's scratch-gui uses: registration, rollback and unload on its real tables and dispatch, and SB3 save and reopen through its serializer. They are typechecked without strict mode (`test/scratch-vm/tsconfig.json`), because they build untyped VM stand-ins; the adapters themselves are strict.
+
+The browser suite uses the minimal Editor runtime and a local HTTPS fixture. It checks that the Loader runs approved code on the real VM, refuses responses without CORS permission and redirects before authorization, and respects CSP when dynamic evaluation is blocked. The fixture requires OpenSSL. After `npm run check`, run:
+
+```sh
+npx --no-install playwright install --only-shell chromium
+npm run test:browser
+```
 
 ## Rollout and rollback
 

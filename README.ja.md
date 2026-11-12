@@ -280,7 +280,14 @@ npm ci --ignore-scripts
 npm run check
 ```
 
-`npm run check` は `src` と `test` の型検査、テスト、パッケージの dry-run を順に実行します。`npm test` は `dist/` をビルドしてから、パッケージ名経由（`exports` 解決）で公開APIを検証します。テストは Node.js の型除去実行で TypeScript のまま動かし、不正値が拒否されることを確かめるケースでは、公開型をゆるめる代わりにその値をキャストで明示的に渡します。Node.js >=26 の組み込み test runner / Web Crypto を使い、Loader 本体を実行時依存パッケージなしで headless 検証します。ZIP codec の fixture 検証には開発依存の `@turbowarp/jszip` を使います。`test/fixtures/extension.js` はホストに渡すバイト列の fixture で、テスト中に評価しません。`test/scratch-vm/` の `./scratch-vm` の試験は、本物の scratch-vm を動かします。scratch-vm は、TurboWarp Plus Editor の scratch-gui と同じリビジョンを開発依存に固定しています。確かめるのは、本物の登録テーブルと dispatch の上での登録・rollback・unload と、その直列化を通した SB3 の保存と再読込です。これらの試験は型の付いていない VM の代役を作るので、strict なしで型検査します（`test/scratch-vm/tsconfig.json`）。アダプター自体は strict です。実ネットワーク、CORS / CSP、ブラウザー拡張実行の検証とは区別します。
+`npm run check` は `src` と `test` の型検査、テスト、パッケージの dry-run を順に実行します。`npm test` は `dist/` をビルドしてから、パッケージ名経由（`exports` 解決）で公開APIを検証します。テストは Node.js の型除去実行で TypeScript のまま動かし、不正値が拒否されることを確かめるケースでは、公開型をゆるめる代わりにその値をキャストで明示的に渡します。Node.js >=26 の組み込み test runner / Web Crypto を使い、Loader 本体を実行時依存パッケージなしで headless 検証します。ZIP codec の fixture 検証には開発依存の `@turbowarp/jszip` を使います。`test/fixtures/extension.js` はホストに渡すバイト列の fixture で、テスト中に評価しません。`test/scratch-vm/` の `./scratch-vm` の試験は、本物の scratch-vm を動かします。scratch-vm は、TurboWarp Plus Editor の scratch-gui と同じリビジョンを開発依存に固定しています。確かめるのは、本物の登録テーブルと dispatch の上での登録・rollback・unload と、その直列化を通した SB3 の保存と再読込です。これらの試験は型の付いていない VM の代役を作るので、strict なしで型検査します（`test/scratch-vm/tsconfig.json`）。アダプター自体は strict です。
+
+ブラウザーテストでは最小 Editor ランタイムとローカルの HTTPS サーバーを使います。許可済みコードが実 VM で動くこと、CORS で許可されていない応答とリダイレクトを認可前に拒否すること、認可後も CSP が動的評価を阻止することを確かめます。テスト用の証明書の生成には OpenSSL が必要です。`npm run check` の後に実行します。
+
+```sh
+npx --no-install playwright install --only-shell chromium
+npm run test:browser
+```
 
 ## 導入と切戻し
 
