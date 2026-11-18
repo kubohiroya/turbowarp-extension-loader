@@ -1,6 +1,6 @@
 {
   "name": "@kubohiroya/turbowarp-extension-loader",
-  "version": "0.11.2-ownership.1",
+  "version": "0.11.2-ownership.2",
   "description": "Host-independent verified TurboWarp Plus extension loading core",
   "keywords": [
     "turbowarp",
@@ -108,7 +108,10 @@
     "scratch-vm/runtime.js",
     "session-trust.js",
     "webpack4.cjs",
-    "EDITOR-MIGRATION.md"
+    "EDITOR-MIGRATION.md",
+    "src",
+    "tsconfig.json",
+    "tsconfig.build.json"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p test",

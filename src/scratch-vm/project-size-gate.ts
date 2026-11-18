@@ -14,7 +14,8 @@ import {LoaderError} from '../index.js';
 import {createProjectIO, inspectZip} from '../project-codec.js';
 import type {ArchiveLimits} from '../project-codec.js';
 
-type Limits = ArchiveLimits & Required<Pick<ArchiveLimits, 'maxProjectBytes' | 'maxArchiveBytes'>>;
+type Limits = ArchiveLimits & Required<Pick<ArchiveLimits, 'maxProjectBytes'>>;
+type CeilingLimits = Limits & Required<Pick<ArchiveLimits, 'maxArchiveBytes'>>;
 
 type ProjectIO = ReturnType<typeof createProjectIO>;
 
@@ -50,7 +51,7 @@ const passes = (run: () => unknown) => {
  * @param ceiling The limits no answer raises.
  * @returns The size to put to the person, or null when there is nothing to ask.
  */
-export async function measureOversizedProject(input: unknown, standard: Limits, ceiling: Limits):
+export async function measureOversizedProject(input: unknown, standard: Limits, ceiling: CeilingLimits):
     Promise<OversizedProject | null> {
     const projectLimit = standard.maxProjectBytes;
     const archiveLimit = standard.maxArchiveBytes ?? DEFAULT_ARCHIVE_BYTES;
@@ -95,7 +96,7 @@ export async function measureOversizedProject(input: unknown, standard: Limits, 
  */
 export function gateProjectSize(io: ProjectIO, {standard, ceiling, confirm}: {
     standard: Limits;
-    ceiling: Limits;
+    ceiling: CeilingLimits;
     confirm: (project: OversizedProject, signal?: AbortSignal) => Promise<boolean>;
 }): ProjectIO {
     const prepare: ProjectIO['prepare'] = async (input, options = {}) => {
