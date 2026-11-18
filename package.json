@@ -1,6 +1,6 @@
 {
   "name": "@kubohiroya/turbowarp-extension-loader",
-  "version": "0.11.2-ownership.0",
+  "version": "0.11.2-ownership.1",
   "description": "Host-independent verified TurboWarp Plus extension loading core",
   "keywords": [
     "turbowarp",
@@ -81,6 +81,14 @@
     "./scratch-vm/catalog-load": {
       "types": "./dist/scratch-vm/catalog-load.d.ts",
       "default": "./dist/scratch-vm/catalog-load.js"
+    },
+    "./scratch-vm/extension-host": {
+      "types": "./dist/scratch-vm/extension-host.d.ts",
+      "default": "./dist/scratch-vm/extension-host.js"
+    },
+    "./scratch-vm/project-size-gate": {
+      "types": "./dist/scratch-vm/project-size-gate.d.ts",
+      "default": "./dist/scratch-vm/project-size-gate.js"
     }
   },
   "files": [
