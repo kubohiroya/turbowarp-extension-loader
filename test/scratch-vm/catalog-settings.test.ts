@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
-import type {CatalogEntry, ReviewDecision} from '@kubohiroya/turbowarp-extension-security-dialog';
+import type {CatalogEntry, ReviewDecision} from '@kubohiroya/turbowarp-extension-loader/scratch-vm/catalog-settings';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import Zip from '@turbowarp/jszip';
-import {applyPlusCatalogSettings, readPlusCatalogSettings} from '../dist/scratch-vm/catalog-settings.js';
+import {applyPlusCatalogSettings, readPlusCatalogSettings} from '@kubohiroya/turbowarp-extension-loader/scratch-vm/catalog-settings';
 import {createExtensionAuthoringController, setExtensionAuthoringHost} from '@kubohiroya/turbowarp-extension-loader/scratch-vm';
 
 const entry = (id, dependencies = []) => ({id, key: id, ids: [id], url: `https://catalog.test/${id}.js`, dependencies,

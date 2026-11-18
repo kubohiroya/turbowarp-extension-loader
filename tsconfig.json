@@ -51,6 +51,18 @@
       ],
       "@kubohiroya/turbowarp-extension-loader/indexeddb-cache": [
         "./src/indexeddb-cache.ts"
+      ],
+      "@kubohiroya/turbowarp-extension-loader/scratch-vm/catalog-settings": [
+        "./src/scratch-vm/catalog-settings.ts"
+      ],
+      "@kubohiroya/turbowarp-extension-loader/scratch-vm/catalog-load": [
+        "./src/scratch-vm/catalog-load.ts"
+      ],
+      "@kubohiroya/turbowarp-extension-loader/scratch-vm/extension-host": [
+        "./src/scratch-vm/extension-host.ts"
+      ],
+      "@kubohiroya/turbowarp-extension-loader/scratch-vm/project-size-gate": [
+        "./src/scratch-vm/project-size-gate.ts"
       ]
     }
   },
