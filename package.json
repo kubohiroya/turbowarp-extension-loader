@@ -111,7 +111,11 @@
     "EDITOR-MIGRATION.md",
     "src",
     "tsconfig.json",
-    "tsconfig.build.json"
+    "tsconfig.build.json",
+    "scratch-vm/catalog-settings.js",
+    "scratch-vm/catalog-load.js",
+    "scratch-vm/extension-host.js",
+    "scratch-vm/project-size-gate.js"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p test",
