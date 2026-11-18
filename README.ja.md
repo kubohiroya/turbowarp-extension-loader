@@ -383,3 +383,8 @@ npm への公開は、検証済みコードをホストへ配布する手段に�
 ## ライセンス
 
 MPL-2.0。全文は [LICENSE](LICENSE) を参照してください。
+
+## Editor の実装との責務分担
+
+Editor 独自実装の移管元とライセンス確認は [EDITOR-MIGRATION.md](EDITOR-MIGRATION.md) に記録しています。
+追加した公開 API は GUI モジュールを import せず、ホストから必要な値・データ・コールバックを受け取ります。
