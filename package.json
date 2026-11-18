@@ -1,6 +1,6 @@
 {
   "name": "@kubohiroya/turbowarp-extension-loader",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "description": "Host-independent verified TurboWarp Plus extension loading core",
   "keywords": [
     "turbowarp",
@@ -73,6 +73,22 @@
     "./indexeddb-cache": {
       "types": "./dist/indexeddb-cache.d.ts",
       "default": "./dist/indexeddb-cache.js"
+    },
+    "./scratch-vm/catalog-settings": {
+      "types": "./dist/scratch-vm/catalog-settings.d.ts",
+      "default": "./dist/scratch-vm/catalog-settings.js"
+    },
+    "./scratch-vm/catalog-load": {
+      "types": "./dist/scratch-vm/catalog-load.d.ts",
+      "default": "./dist/scratch-vm/catalog-load.js"
+    },
+    "./scratch-vm/extension-host": {
+      "types": "./dist/scratch-vm/extension-host.d.ts",
+      "default": "./dist/scratch-vm/extension-host.js"
+    },
+    "./scratch-vm/project-size-gate": {
+      "types": "./dist/scratch-vm/project-size-gate.d.ts",
+      "default": "./dist/scratch-vm/project-size-gate.js"
     }
   },
   "files": [
@@ -91,7 +107,15 @@
     "scratch-vm.js",
     "scratch-vm/runtime.js",
     "session-trust.js",
-    "webpack4.cjs"
+    "webpack4.cjs",
+    "EDITOR-MIGRATION.md",
+    "src",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "scratch-vm/catalog-settings.js",
+    "scratch-vm/catalog-load.js",
+    "scratch-vm/extension-host.js",
+    "scratch-vm/project-size-gate.js"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p test",

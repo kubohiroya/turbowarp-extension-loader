@@ -383,3 +383,11 @@ npm への公開は、検証済みコードをホストへ配布する手段に�
 ## ライセンス
 
 MPL-2.0。全文は [LICENSE](LICENSE) を参照してください。
+
+## Editor の実装との責務分担
+
+Editor 独自実装の移管元とライセンス確認は [EDITOR-MIGRATION.md](EDITOR-MIGRATION.md) に記録しています。
+追加した公開 API は GUI モジュールを import せず、ホストから必要な値・データ・コールバックを受け取ります。
+
+`./scratch-vm/extension-host` は UI とレビューの接続を受け取り、承認状態・信頼・VM ホストのライフサイクルを所有します。
+`./scratch-vm/project-size-gate` は通常上限と許可後の上限の間にある作品を判定し、呼び出しごとに同意を確認します。上限値と確認 UI はホストが渡します。
