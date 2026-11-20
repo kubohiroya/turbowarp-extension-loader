@@ -1,6 +1,6 @@
 {
   "name": "@kubohiroya/turbowarp-extension-loader",
-  "version": "0.11.2",
+  "version": "0.12.0",
   "description": "Host-independent verified TurboWarp Plus extension loading core",
   "keywords": [
     "turbowarp",
@@ -128,7 +128,7 @@
     "typecheck:scratch-vm": "tsc --noEmit -p test/scratch-vm"
   },
   "devDependencies": {
-    "@kubohiroya/turbowarp-plus-editor-test-runtime": "0.2.0",
+    "@kubohiroya/turbowarp-plus-editor-test-runtime": "0.3.0",
     "@turbowarp/jszip": "3.12.0",
     "@types/node": "26.6.6",
     "fake-indexeddb": "6.2.7",
