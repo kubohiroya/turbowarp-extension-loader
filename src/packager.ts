@@ -184,3 +184,4 @@ export function restrictOfflineHTML(html: string): string {
     // Multiple CSP policies intersect: the Packager's permissive CSP cannot loosen this one.
     return html.replace(/<head(?:\s[^>]*)?>/i, match => `${match}\n<meta http-equiv="Content-Security-Policy" content="${policy}">`);
 }
+export {packagerPageMessages} from './packager-messages.js';
