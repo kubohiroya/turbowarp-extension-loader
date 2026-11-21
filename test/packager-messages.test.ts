@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
-import {packagerPageMessages} from '../dist/packager.js';
+import {packagerPageMessages} from '@kubohiroya/turbowarp-extension-loader/packager';
 
 test('the packager page words keep the error code and follow the locale', () => {
     const ja = packagerPageMessages('ja');
