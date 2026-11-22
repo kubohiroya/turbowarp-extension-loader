@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `./packager` adds `configurePlusPackager` and `packagePlusHTML`, which write a project as one offline HTML with the actual TurboWarp Packager. They moved from the TurboWarp Plus Editor with their tests. The archive limits are now a required `archiveOptions` option; the Editor passed its own 64 MiB limits implicitly.
+- `./shared-project-archive` lets a Loader build share its verified SB3 read with the host. It moved from the Editor with its test.
+
 ## 0.11.1
 
 - The registrar accepts an extension that publishes itself at `runtime.ext_<id>` from its constructor (as Camera Source does). The check after evaluation treats that slot as a conflict only when it holds another object, and a failed registration removes it only while it still holds the extension being registered.
