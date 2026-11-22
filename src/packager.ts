@@ -185,3 +185,123 @@ export function restrictOfflineHTML(html: string): string {
     return html.replace(/<head(?:\s[^>]*)?>/i, match => `${match}\n<meta http-equiv="Content-Security-Policy" content="${policy}">`);
 }
 export {packagerPageMessages} from './packager-messages.js';
+
+/** How a single offline Plus HTML is configured. */
+export interface PlusPackagerOptions {
+    /** The trusted bundle with the Loader, VM registrar and permission UI; it installs `TurboWarpPlusExtensionHost`. */
+    runtimeBundle?: string;
+    locale?: string;
+    /** Patched scaffolding the build inlines instead of fetching. */
+    scaffoldingAssets?: Record<string, string>;
+    /** SHA-256 digests of packaged extensions the recipient runs without approval. */
+    trustedDigests?: string[];
+    embeddedProjectData?: boolean;
+    /** The archive limits the recipient's Loader applies; they travel with the HTML. */
+    archiveOptions: Record<string, number>;
+}
+
+/**
+ * Write a project out as a single HTML.
+ *
+ * Moved from the Plus Editor's `site/packager/html.ts` (kubohiroya/turbowarp-plus-editor#741), and before that from the fork's `src/lib/tw-plus-packager.js`. It configures an actual TurboWarp Packager
+ * instance, which arrives as an argument: the upstream Packager stays an upstream dependency this
+ * repository pins and checks out, and nothing here imports it.
+ *
+ * What this decides is this distribution's: which runtime bundle the HTML carries, which digests
+ * travel with it, the archive limits it states, and the bootstrap that installs extension loading
+ * in the recipient's player.
+ */
+
+
+
+const packagerFailure = (code: string, message: string) => Object.assign(new Error(message), {code});
+const SHA256 = /^[0-9a-f]{64}$/;
+
+/**
+ * Configure an actual TurboWarp Packager instance with a verified offline bundle.
+ * The bootstrap is supplied by the trusted build, never by project metadata.
+ */
+export function configurePlusPackager(packager: any, prepared: any, {
+    runtimeBundle, locale = 'ja', scaffoldingAssets, trustedDigests = [], embeddedProjectData = false, archiveOptions
+}: PlusPackagerOptions) {
+    if (!prepared?.offline || !(prepared.projectBytes instanceof Uint8Array) ||
+        !prepared.manifest || !packager?.options || typeof packager.package !== 'function') {
+        throw packagerFailure('INVALID_PACKAGE', 'A verified offline Plus bundle and Packager instance are required');
+    }
+    if (typeof runtimeBundle !== 'string' || !runtimeBundle.trim()) {
+        throw packagerFailure('MISSING_BOOTSTRAP', 'The host must bundle the Loader, VM registrar and permission UI');
+    }
+    // Digests of catalog-listed extensions let the recipient run them without approval, as in the Editor.
+    const digests = new Set(prepared.manifest.extensions.map((spec: {sha256: string}) => spec.sha256));
+    if (!Array.isArray(trustedDigests) ||
+        trustedDigests.some((digest: unknown) => typeof digest !== 'string' || !SHA256.test(digest) || !digests.has(digest))) {
+        throw packagerFailure('INVALID_TRUSTED_DIGESTS', 'Trusted digests must be SHA-256 digests of the packaged extensions');
+    }
+    if (packager.used) throw packagerFailure('PACKAGE_BUSY', 'Packager was already used');
+    if (packager.options.custom?.js?.trim()) {
+        throw packagerFailure('UNREVIEWED_CUSTOM_CODE', 'Custom JavaScript must be reviewed separately from Plus extension packaging');
+    }
+    if (scaffoldingAssets) {
+        const inlineAssets: Record<string, string> = {};
+        for (const name of ['scaffolding', 'scaffolding-min', 'addons']) {
+            if (typeof scaffoldingAssets[name] !== 'string' || !scaffoldingAssets[name]) {
+                throw packagerFailure('MISSING_SCAFFOLDING', `Trusted patched scaffolding asset is missing: ${name}`);
+            }
+            // The upstream Packager rewrites raw closing tags assuming single-quoted
+            // literals. Escape the slash first so double-quoted iframe bootstraps survive.
+            inlineAssets[name] = scaffoldingAssets[name]!.replace(/<\/script/gi, '<\\/script');
+        }
+        packager.fetchLargeAsset = async (name: string) => {
+            if (!Object.prototype.hasOwnProperty.call(scaffoldingAssets, name)) {
+                throw packagerFailure('UNBUNDLED_DEPENDENCY', `Packager asset is not bundled: ${name}`);
+            }
+            return inlineAssets[name];
+        };
+    }
+    const analysis = packager.project?.analysis || {
+        stageVariables: [], stageComments: [], usesMusic: true, usesSteamworks: false, extensions: []
+    };
+    packager.project = {
+        // Keeping the SB3 opaque allows the same Loader codec to validate its embedded entries.
+        type: 'blob',
+        arrayBuffer: prepared.projectBytes.slice().buffer,
+        analysis: {...analysis, extensions: []}
+    };
+    const script = runtimeBundle.replace(/<\/script/gi, '<\\/script');
+    // The limits travel with the HTML: the runtime bundle no longer holds a copy of them.
+    const options = JSON.stringify({enabled: true, locale, trustedDigests,
+        ...(embeddedProjectData ? {embeddedProjectData} : {}), archiveOptions}).replace(/</g, '\\u003c');
+    packager.options.target = 'html';
+    packager.options.cloudVariables = {...packager.options.cloudVariables, mode: 'none'};
+    packager.options.custom = {...packager.options.custom, js: `
+${script}
+(function() {
+    let ready = false;
+    const originalLoad = vm.loadProject;
+    vm.loadProject = function(...args) {
+        if (!ready) return Promise.reject(new Error('Plus runtime bootstrap did not complete'));
+        return originalLoad.apply(this, args);
+    };
+    const runtime = globalThis.TurboWarpPlusExtensionHost;
+    if (!runtime || typeof runtime.installPlusExtensionHost !== 'function') {
+        throw new Error('Trusted Plus runtime is missing');
+    }
+    const host = runtime.installPlusExtensionHost(vm, ${options});
+    if (!host || host.enabled !== true) throw new Error('Plus runtime is disabled');
+    globalThis.__TW_PLUS_PACKAGE_HOST__ = host;
+    ready = true;
+})();`};
+    return packager;
+}
+
+/** Generate one HTML file; restrictive CSP prevents runtime remote resource dependencies. */
+export async function packagePlusHTML(packager: any, prepared: any, options: PlusPackagerOptions) {
+    configurePlusPackager(packager, prepared, options);
+    const result = await packager.package();
+    if (result.type !== 'text/html' || (typeof result.data !== 'string' && !(result.data instanceof Uint8Array))) {
+        throw packagerFailure('INVALID_PACKAGE_OUTPUT', 'Packager did not return a single HTML document');
+    }
+    const html = typeof result.data === 'string' ? result.data : new TextDecoder('utf-8', {fatal: true}).decode(result.data);
+    const restricted = restrictOfflineHTML(html);
+    return {...result, data: typeof result.data === 'string' ? restricted : new TextEncoder().encode(restricted)};
+}

@@ -58,6 +58,10 @@
       "types": "./dist/packager.d.ts",
       "default": "./dist/packager.js"
     },
+    "./shared-project-archive": {
+      "types": "./dist/shared-project-archive.d.ts",
+      "default": "./dist/shared-project-archive.js"
+    },
     "./scratch-vm": {
       "types": "./dist/scratch-vm/index.d.ts",
       "default": "./dist/scratch-vm/index.js"
@@ -107,6 +111,7 @@
     "scratch-vm.js",
     "scratch-vm/runtime.js",
     "session-trust.js",
+    "shared-project-archive.js",
     "webpack4.cjs",
     "EDITOR-MIGRATION.md",
     "src",
@@ -130,6 +135,7 @@
   "devDependencies": {
     "@kubohiroya/turbowarp-plus-editor-test-runtime": "0.3.2",
     "@turbowarp/jszip": "3.12.0",
+    "@turbowarp/packager": "3.14.0",
     "@types/node": "26.6.6",
     "fake-indexeddb": "6.2.7",
     "playwright": "1.64.1",
