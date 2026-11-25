@@ -44,6 +44,9 @@ test('an operation can refuse previously approved embedded code without changing
         async requestApproval() { prompts++; return true; }
     });
     assert.equal((await provider.authorize(embedded)).allowed, true);
+    assert.equal(provider.hasApproval(embedded), true);
+    assert.equal(provider.hasApproval({...embedded, execution: 'unsandboxed'}), false);
+    assert.equal(provider.hasApproval({...embedded, source: {type: 'embedded-file', path: 'extensions/changed.js'}}), false);
     assert.deepEqual(await provider.authorize({...embedded, execution: 'unsandboxed'}), {allowed: false});
     activeDigest = undefined;
     // The same bytes may already be in the session cache from another run.

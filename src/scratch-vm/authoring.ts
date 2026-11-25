@@ -110,6 +110,12 @@ export const createExtensionAuthoringController = (vm: ScratchVM, {
             replacementListeners.add(callback);
             return () => replacementListeners.delete(callback);
         },
+        isApplyingDevelopmentBuild () {
+            return approvedBuild !== null;
+        },
+        isLoadingDevelopmentBuild () {
+            return approvedBuild !== null && ownInputs.size > 0;
+        },
         isDevelopmentBuildApproved (spec: ExtensionSpec | ResolvedCode) {
             return approvedBuild?.id === spec.id && spec.execution === 'sandboxed' &&
                 spec.source.type === 'embedded-file' && !spec.source.url && !spec.dependencies.length &&

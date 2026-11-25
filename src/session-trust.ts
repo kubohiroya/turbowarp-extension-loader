@@ -1,4 +1,5 @@
-import {isRemoteSource, LoaderError, type AuthorizationDecision, type ResolvedCode} from './index.js';
+import {isRemoteSource, LoaderError, type AuthorizationDecision, type ExtensionSpec, type ResolvedCode} from './index.js';
+import {extensionApprovalKey} from './extension-approval-key.js';
 
 export interface SessionTrustOptions {
     requestApproval(code: ResolvedCode, options: {signal?: AbortSignal}): Promise<boolean>;
@@ -12,6 +13,8 @@ export interface SessionTrustOptions {
 }
 export type SessionTrustProvider = Readonly<{
     authorize(code: ResolvedCode, options?: {signal?: AbortSignal}): Promise<AuthorizationDecision>;
+    /** Only a review hint. Authorization must still read and verify the bytes and host policy. */
+    hasApproval(spec: ExtensionSpec): boolean;
     revokeAll(): void;
     getApprovalCount(): number;
 }>;
@@ -63,10 +66,7 @@ export function createSessionTrustProvider({
                     if (!compatible) return Object.freeze({allowed: false});
                 }
             }
-            const location: {url?: string; path?: string} = code.source;
-            const key = JSON.stringify([code.id, code.sha256, code.execution, code.source.type,
-                location.url ?? location.path, code.version ?? null, code.publisher ?? null,
-                [...code.capabilities].sort(), [...code.dependencies].sort()]);
+            const key = extensionApprovalKey(code);
             if (!approvals.has(key)) {
                 const started = generation;
                 const approved = await requestApproval(code, {signal});
@@ -77,6 +77,7 @@ export function createSessionTrustProvider({
             }
             return Object.freeze({allowed: true, scope: 'digest', sha256: code.sha256});
         },
+        hasApproval(spec: ExtensionSpec) { return approvals.has(extensionApprovalKey(spec)); },
         revokeAll() { generation++; approvals.clear(); },
         getApprovalCount() { return approvals.size; }
     });

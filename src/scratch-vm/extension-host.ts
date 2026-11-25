@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 import {createExtensionLoader, createFetchPort} from '../index.js';
-import type {DiagnosticEvent, FetchRetryOptions, LoaderOptions, LoaderPorts, Manifest, ResolvedCode} from '../index.js';
+import type {DiagnosticEvent, ExtensionSpec, FetchRetryOptions, LoaderOptions, LoaderPorts, Manifest, ResolvedCode} from '../index.js';
 import {createMemoryContentCache} from '../memory-cache.js';
 import {createProjectIO} from '../project-codec.js';
 import type {ZipConstructor} from '../project-codec.js';
 import {createSessionTrustProvider} from '../session-trust.js';
+import {extensionApprovalKey} from '../extension-approval-key.js';
 import type {SessionTrustOptions} from '../session-trust.js';
 import type {createExtensionAuthoringController, createProjectAddresser, setExtensionAuthoringHost} from './index.js';
 import {createVMExtensionRegistrar, installExtensionLoader} from './runtime.js';
@@ -164,8 +165,12 @@ export function createScratchVMExtensionHost<Channel extends ReviewChannelPort>(
         // even for code an earlier load was allowed to run.
         let authoring: ReturnType<typeof createExtensionAuthoringController> | null = null;
         const hasURLPolicy = Boolean(hostPolicy?.canLoadExtensionFromProject || hostPolicy?.getSandboxMode);
-        const locallyApproved = (spec: Manifest['extensions'][number] | ResolvedCode) =>
-            !hasURLPolicy && authoring?.isDevelopmentBuildApproved(spec) === true;
+        const localApprovals = new Set<string>();
+        const isDevelopmentLoad = () => !hasURLPolicy && authoring?.isLoadingDevelopmentBuild() === true;
+        const locallyApproved = (spec: ExtensionSpec | ResolvedCode) =>
+            !hasURLPolicy && (authoring?.isDevelopmentBuildApproved(spec) === true ||
+                (authoring?.isApplyingDevelopmentBuild() === true && localApprovals.has(extensionApprovalKey(spec)) &&
+                    (!('actualSHA256' in spec) || spec.actualSHA256 === spec.sha256)));
         const trustProvider: typeof sessionTrust = Object.freeze({
             ...sessionTrust,
             async authorize (code: ResolvedCode, options?: {signal?: AbortSignal}) {
@@ -174,7 +179,12 @@ export function createScratchVMExtensionHost<Channel extends ReviewChannelPort>(
                     options?.signal?.throwIfAborted();
                     if (canLoadVerifiedCode && !(await canLoadVerifiedCode(code, options ?? {}))) return {allowed: false};
                     options?.signal?.throwIfAborted();
-                    if (locallyApproved(code)) return {allowed: true, scope: 'digest' as const, sha256: code.actualSHA256};
+                    if (locallyApproved(code)) {
+                        const key = extensionApprovalKey(code);
+                        localApprovals.add(key);
+                        if (localApprovals.size > 128) localApprovals.delete(localApprovals.values().next().value!);
+                        return {allowed: true, scope: 'digest' as const, sha256: code.actualSHA256};
+                    }
                 }
                 return sessionTrust.authorize(code, options);
             }
@@ -188,7 +198,8 @@ export function createScratchVMExtensionHost<Channel extends ReviewChannelPort>(
          * @returns {Promise<object>} `declineCaching` for `load()`, and `release` once it settles.
          */
         const review = async (manifest: Manifest, run: () => Promise<unknown>, signal: AbortSignal) => {
-            const channel = openReview(vm, {...manifest, extensions: manifest.extensions.filter(spec => !locallyApproved(spec))}, path =>
+            const channel = openReview(vm, {...manifest, extensions: manifest.extensions.filter(spec => !locallyApproved(spec) &&
+                !(isDevelopmentLoad() && sessionTrust.hasApproval(spec)))}, path =>
                 projectIO.embeddedReader.read(path, {signal, maxBytes: loaderOptions?.maxBytes}));
             try {
                 await run();
@@ -220,6 +231,7 @@ export function createScratchVMExtensionHost<Channel extends ReviewChannelPort>(
         // the controller, and everything it pulls in, out of that bundle.
         authoring = typeof createAuthoring === 'function' ?
             createAuthoring(vm, {ports, diagnostics, loaderOptions, archiveOptions, zip: JSZip}) : null;
+        authoring?.onProjectReplacement(() => localApprovals.clear());
         let uninstall: ReturnType<typeof installExtensionLoader>;
         try {
             uninstall = installExtensionLoader({vm, projectIO, transactionalRegistration: true,
