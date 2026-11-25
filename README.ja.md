@@ -388,6 +388,8 @@ npm への公開は、検証済みコードをホストへ配布する手段に�
 
 `test/scratch-vm/editor-retry-classification.test.ts` は Editor #741 の再試行判定を引き継ぎます。1件のテストで成功時と9種類の失敗（offline・timeout・404・503・429・redirect・拒否・cancel・登録 ID 不一致）を実際の VM と公開 host/authoring API で検証します。検証本体と SB3 fixture は保持し、生成先を `createScratchVMExtensionHost` と `createExtensionAuthoringController` へ接続します。UI と review のポートだけを注入し、製品の Editor モジュールは読みません。VM は既存のテスト固定 `e623546` を使い、Storage `2.0.0` をテスト専用依存として追加します。Editor には現在の固定 VM で authoring と再試行通知を接続する既存テストを残します。既存の `npm test` と CI が実行します。移管テストは元の GPL-3.0-or-later（`test/LICENSE.GPL-3.0`）を保持し、npm 配布対象外です。切り戻しは Editor の元テストを復元してから、追加テスト・devDependency・lockfile・文書を revert します。
 
+`test/scratch-vm/editor-babel-rollback.test.ts` は Editor #741 の native/webpack4 変換後の rollback 検証6件を引き継ぎます。登録拒否後の再利用、cleanup 失敗時の原因保持と復旧要求、実 VM の sandboxed/unsandboxed 登録失敗からの再試行を検証します。検証本体・fixture・変換設定（IE11、modules:false）は維持し、Babel と VM の解決先だけを GUI checkout からテスト用依存へ変更します。Babel core `7.29.7` と preset-env `7.14.8` は Editor `9c4d28d` の固定 GUI lockfile と同じ版です。VM は移管先の既存固定を利用し、公開 core と registrar は同じ built entry から解決して認可の単一インスタンスを維持します。既存の `npm test` と CI が GUI checkout なしで実行します。元の GPL-3.0-or-later（`test/LICENSE.GPL-3.0`）を保持し、テストは npm 配布対象外です。Editor の実 VM/authoring 接続確認は保持し、上流 CI 成功とマージ後に重複を削除します。切り戻しは Editor の元テストを復元してから、追加テスト・Babel devDependencies・lockfile・文書を revert します。
+
 ## ライセンス
 
 MPL-2.0。全文は [LICENSE](LICENSE) を参照してください。
