@@ -63,7 +63,7 @@ export const createExtensionAuthoringController = (vm: ScratchVM, {
     let revision = 0;
     let pending: Operation | null = null;
     let ownLoad = false;
-    const ownInputs = new Set<unknown>();
+    const ownInputs = new Map<unknown, ExtensionSpec | undefined>();
     let disposed = false;
     const disposalListeners = new Set<() => void>();
     const replacementListeners = new Set<() => void>();
@@ -76,11 +76,11 @@ export const createExtensionAuthoringController = (vm: ScratchVM, {
         if (pending && !ownLoad) pending.controller.abort();
     };
     vm.on('PROJECT_CHANGED', changed);
-    const load = (bytes: unknown) => {
+    const load = (bytes: unknown, approvedAddition?: ExtensionSpec) => {
         // The diagnostics/metadata wrapper can defer the host's load-start callback. Claim this
         // input now so a delayed callback neither cancels this operation nor changes its revision.
         revision++;
-        ownInputs.add(bytes);
+        ownInputs.set(bytes, approvedAddition);
         ownLoad = true;
         try {
             return Promise.resolve(vm.loadProject(bytes)).finally(() => ownInputs.delete(bytes));
@@ -100,6 +100,7 @@ export const createExtensionAuthoringController = (vm: ScratchVM, {
                     try { callback(); } catch { /* A departing listener cannot block the next project. */ }
                 }
             }
+            return ownInputs.get(input);
         },
         onDispose (callback: () => void) {
             disposalListeners.add(callback);
@@ -189,7 +190,7 @@ export const createExtensionAuthoringController = (vm: ScratchVM, {
                     legacy = ports.registrar.prepareLegacyReplacement(legacyIds);
                 }
                 // The core has already obtained the host's approval for these exact bytes.
-                const loading = load(prepared.projectBytes);
+                const loading = load(prepared.projectBytes, prepared.spec);
                 appliedRevision = revision;
                 await loading;
                 if (disposed || operation.controller.signal.aborted || revision !== appliedRevision) {

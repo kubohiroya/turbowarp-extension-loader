@@ -68,6 +68,31 @@ test('registers after VM clear and delegates ordinary IDs and URLs to the existi
     assert.deepEqual(f.vm.saveProjectSb3DontZip(), {'project.json': 'project:retained', embedded: true});
 });
 
+test('only the exact added spec skips duplicate review on the internal authoring load', async () => {
+    const input = {};
+    const approved = {id: 'plus', execution: 'sandboxed' as const, sha256: '1'.repeat(64),
+        source: {type: 'embedded-file' as const, path: 'extensions/plus.js'}, capabilities: [], dependencies: []};
+    const other = {...approved, id: 'previous', sha256: '2'.repeat(64)};
+    const manifest = {schemaVersion: 1, extensions: [approved, other]};
+    const f = fixture({manifest});
+    let approval = approved;
+    const reviews: string[][] = [];
+    installExtensionLoader({...f.host,
+        onProjectLoadStart: candidate => candidate === input ? approval : undefined,
+        async review(summary, loadOthers) {
+            reviews.push(summary.extensions.map(spec => spec.id));
+            await loadOthers();
+            return {release() {}};
+        }
+    }, f.loader);
+    await f.vm.loadProject(input);
+    await f.vm.loadProject({});
+    approval = {...approved, sha256: '3'.repeat(64)};
+    await f.vm.loadProject(input);
+    assert.deepEqual(reviews, [['previous'], ['plus', 'previous'], ['plus', 'previous']]);
+    assert.equal(f.events.filter(([name]) => name === 'loader.load').length, 3);
+});
+
 test('projects without a manifest retain the legacy path and serializers', async () => {
     const f = fixture({manifest: null});
     installExtensionLoader(f.host, f.loader);

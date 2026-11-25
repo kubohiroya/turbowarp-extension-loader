@@ -9,7 +9,8 @@ import {markFetchRejection} from './fetch-rejection.js';
 export type ExtensionAdditionRequest = {
     id: string;
     execution?: ExecutionMode;
-    source: {type: 'embedded-file'; path?: string};
+    source: {type: 'embedded-file'; path?: string; url?: string};
+    version?: string;
     bytes: Uint8Array | Blob;
 } | {
     id: string;
@@ -67,7 +68,7 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
     zip: Zip, signal: externalSignal, loaderOptions = {}, archiveOptions, uri, developmentBuild
 }: Partial<ExtensionAdditionOptions> = {}): Promise<PreparedExtensionAddition> {
     if (typeof Zip !== 'function' || typeof Zip.loadAsync !== 'function') throw new TypeError('A compatible JSZip constructor is required');
-    if (!plainObject(request) || Object.keys(request).some(key => !['id', 'source', 'bytes', 'execution'].includes(key))) {
+    if (!plainObject(request) || Object.keys(request).some(key => !['id', 'source', 'bytes', 'execution', 'version'].includes(key))) {
         fail('INVALID_ADDITION', 'An extension ID and file or URL source are required');
     }
     if (typeof ports?.trustProvider?.authorize !== 'function') fail('INVALID_PORT', 'An explicit host trust provider is required');
@@ -80,7 +81,7 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         {...request.source, path: `extensions/${request.id}.js`} : request.source;
     // Reuse the runtime schema before any bytes are read or network requests begin.
     const draft = validateManifest({schemaVersion: 1, extensions: [{id: request.id, source,
-        execution: request.execution === undefined ? 'unsandboxed' : request.execution,
+        execution: request.execution === undefined ? 'unsandboxed' : request.execution, version: request.version,
         sha256: '0'.repeat(64)}]}, loaderOptions).extensions[0];
     if (developmentBuild && (draft.execution !== 'sandboxed' || draft.source.type !== 'embedded-file' || draft.source.url)) {
         fail('INVALID_ADDITION', 'A development build must be a local sandboxed file', draft.id);
