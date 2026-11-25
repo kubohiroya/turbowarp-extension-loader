@@ -391,6 +391,8 @@ Publishing to npm is only a way to deliver verified code to a host. Obtaining th
 
 `test/editor-project-size-gate.test.ts` carries two Editor #741 cases for project-size measurement, compression-ratio refusal and per-load consent. The existing `npm test` and CI run them without a GUI checkout or VM; the Editor originals stay until both this migration and the workbench dialog migration are merged with successful CI. Test bodies and fixture data are preserved, with type-only annotations for the test compiler. These tests retain GPL-3.0-or-later (see `test/LICENSE.GPL-3.0`); tests and that license are excluded from the npm archive. The library remains MPL-2.0. Revert the added tests, test license and documentation to undo this migration, restoring the Editor originals first if removed.
 
+`test/scratch-vm/editor-project-uri.test.ts` carries five Editor #741 cases for URI assignment through the authoring controller: HTTPS-only allocation, the UUID path shape, unchanged existing addresses and empty catalog changes. It uses the built public API with an EventEmitter-based VM stand-in and needs no GUI checkout or real VM. Test bodies and fixtures are unchanged. The existing `npm test` and CI run these cases. Editor keeps its real-VM URI and open-review wiring test, and its originals stay until successful upstream CI and merge. The migrated tests retain GPL-3.0-or-later under `test/LICENSE.GPL-3.0` and remain outside the npm archive. Revert the added tests and documentation to undo the migration, restoring the Editor originals first if removed.
+
 ## License
 
 [MPL-2.0](LICENSE)
