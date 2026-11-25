@@ -382,6 +382,8 @@ npm への公開は、検証済みコードをホストへ配布する手段に�
 
 `test/editor-project-size-gate.test.ts` は Editor #741 の作品サイズ計測・圧縮率による拒否・読み込みごとの同意の2件を引き継ぎます。既存の `npm test` と CI が GUI checkout・VM なしで実行します。この移管と workbench の確認画面の移管がともに CI 成功・マージするまでは、Editor の元テストを保持します。テストの型検査用の型専用記法を加える以外は、検証本体と fixture データを維持します。元の GPL-3.0-or-later は `test/LICENSE.GPL-3.0` とともに保持し、テストとそのライセンスは npm 配布対象外です。ライブラリ本体は MPL-2.0 のままです。切り戻しは追加テスト・テスト用ライセンス・文書を revert し、Editor で削除済みなら元テストを先に復元します。
 
+`test/scratch-vm/editor-project-uri.test.ts` は Editor #741 の URI 付与5件を引き継ぎます。HTTPS だけでの生成、UUID を含むパス、既存 URI の保持、空のカタログ変更を、ビルド済みの authoring controller の公開 API と EventEmitter による VM の代役で確認します。GUI checkout と実 VM は不要で、検証本体と fixture は変更しません。既存の `npm test` と CI から実行します。Editor には実 VM と URI・開く際のレビューをつなぐ1件を残し、上流 CI 成功とマージまでは元テストも保持します。元の GPL-3.0-or-later と `test/LICENSE.GPL-3.0` を保持し、テストは npm 配布対象外です。切り戻しは追加テストと文書を revert し、Editor で削除済みなら元テストを先に復元します。
+
 ## ライセンス
 
 MPL-2.0。全文は [LICENSE](LICENSE) を参照してください。
