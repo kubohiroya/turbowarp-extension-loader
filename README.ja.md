@@ -386,6 +386,8 @@ npm への公開は、検証済みコードをホストへ配布する手段に�
 
 `test/scratch-vm/editor-save-address.test.ts` は Editor #741 の保存時 URI 付与5件を引き継ぎます。初回保存での付与と再利用、ZIP/ファイル保存と sprite 書き出しの区別、既存 URI の保持、manifest/付与ポートがない場合、再読込での状態リセットを、公開 `createProjectIO`・`installExtensionLoader` と VM の代役で検証します。検証本体・fixture と元の GPL-3.0-or-later（`test/LICENSE.GPL-3.0`）を保持し、GUI checkout と実 VM は不要です。既存の `npm test` と CI が実行し、テストは npm 配布対象外です。Editor には実 VM・HTTPS・キャッシュ・単一 HTML の接続確認5件を保持し、上流の CI 成功とマージ後に重複を除去します。切り戻しは Editor の元テストを先に復元してから、追加テストと文書を revert します。
 
+`test/scratch-vm/editor-retry-classification.test.ts` は Editor #741 の再試行判定を引き継ぎます。1件のテストで成功時と9種類の失敗（offline・timeout・404・503・429・redirect・拒否・cancel・登録 ID 不一致）を実際の VM と公開 host/authoring API で検証します。検証本体と SB3 fixture は保持し、生成先を `createScratchVMExtensionHost` と `createExtensionAuthoringController` へ接続します。UI と review のポートだけを注入し、製品の Editor モジュールは読みません。VM は既存のテスト固定 `e623546` を使い、Storage `2.0.0` をテスト専用依存として追加します。Editor には現在の固定 VM で authoring と再試行通知を接続する既存テストを残します。既存の `npm test` と CI が実行します。移管テストは元の GPL-3.0-or-later（`test/LICENSE.GPL-3.0`）を保持し、npm 配布対象外です。切り戻しは Editor の元テストを復元してから、追加テスト・devDependency・lockfile・文書を revert します。
+
 ## ライセンス
 
 MPL-2.0。全文は [LICENSE](LICENSE) を参照してください。
