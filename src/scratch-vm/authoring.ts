@@ -16,7 +16,7 @@ import {withProjectSerialization} from './serialization-context.js';
 import {createProjectAddresser} from './project-address.js';
 
 import type {AuthoringPorts} from '../project-authoring.js';
-import type {LoaderOptions, DiagnosticEvent} from '../index.js';
+import type {LoaderOptions, DiagnosticEvent, ExtensionSpec, ResolvedCode} from '../index.js';
 import type {ZipConstructor} from '../project-codec.js';
 import type {ScratchVM} from './vm.js';
 
@@ -26,6 +26,8 @@ import type {ScratchVM} from './vm.js';
 type Port = any;
 type Operation = {controller: AbortController};
 type ApplyOptions = {signal?: AbortSignal; onPrepared?: (preview: unknown) => void};
+type DevelopmentBuild = {id: string; sha256: string; previousSHA256?: string};
+const sha256Pattern = /^[0-9a-f]{64}$/;
 const describe = (error: unknown) => (error ?? {}) as {code?: string; message?: string; extensionId?: string; committed?: boolean};
 
 const hosts = new WeakMap<object, ReturnType<typeof createExtensionAuthoringController>>();
@@ -64,7 +66,12 @@ export const createExtensionAuthoringController = (vm: ScratchVM, {
     const ownInputs = new Set<unknown>();
     let disposed = false;
     const disposalListeners = new Set<() => void>();
+    const replacementListeners = new Set<() => void>();
+    let approvedBuild: (DevelopmentBuild & {previousInterface?: string}) | null = null;
     const changed = () => {
+        // Restoring the development snapshot emits PROJECT_CHANGED from the VM itself. External
+        // load requests revoke the build in projectLoadStarted before invalidating the revision.
+        if (approvedBuild && ownInputs.size) return;
         revision++;
         if (pending && !ownLoad) pending.controller.abort();
     };
@@ -86,13 +93,36 @@ export const createExtensionAuthoringController = (vm: ScratchVM, {
     };
     return Object.freeze({
         projectLoadStarted (input: unknown) {
-            if (!ownInputs.has(input)) changed();
+            if (!ownInputs.has(input)) {
+                approvedBuild = null;
+                changed();
+                for (const callback of replacementListeners) {
+                    try { callback(); } catch { /* A departing listener cannot block the next project. */ }
+                }
+            }
         },
         onDispose (callback: () => void) {
             disposalListeners.add(callback);
             return () => disposalListeners.delete(callback);
         },
-        async apply (request: Port, {signal, onPrepared = () => {}}: ApplyOptions = {}, prepare: Port = prepareAddition): Promise<Port> {
+        onProjectReplacement (callback: () => void) {
+            replacementListeners.add(callback);
+            return () => replacementListeners.delete(callback);
+        },
+        isDevelopmentBuildApproved (spec: ExtensionSpec | ResolvedCode) {
+            return approvedBuild?.id === spec.id && spec.execution === 'sandboxed' &&
+                spec.source.type === 'embedded-file' && !spec.source.url && !spec.dependencies.length &&
+                !spec.capabilities.length && (!('actualSHA256' in spec) || spec.actualSHA256 === spec.sha256) &&
+                (spec.sha256 === approvedBuild.sha256 || spec.sha256 === approvedBuild.previousSHA256);
+        },
+        checkDevelopmentInterface (spec: ResolvedCode, signature: string) {
+            if (approvedBuild?.id === spec.id && approvedBuild.sha256 === spec.sha256 &&
+                approvedBuild.previousInterface !== undefined && signature !== approvedBuild.previousInterface) {
+                throw failure('DEVELOPMENT_INTERFACE_CHANGED', 'The development build registered an incompatible block interface');
+            }
+        },
+        async apply (request: Port, {signal, onPrepared = () => {}}: ApplyOptions = {}, prepare: Port = prepareAddition,
+            snapshot: () => Promise<unknown> = () => vm.saveProjectSb3('arraybuffer')): Promise<Port> {
             if (disposed) throw failure('LOADER_DISPOSED', 'The extension host was disposed');
             if (pending) throw failure('PROJECT_BUSY', 'Another extension is being added');
             if (signal?.aborted) throw failure('CANCELLED', 'Extension addition cancelled');
@@ -105,7 +135,7 @@ export const createExtensionAuthoringController = (vm: ScratchVM, {
             let appliedRevision: number | null = null;
             let legacy: Port;
             try {
-                original = await vm.saveProjectSb3('arraybuffer');
+                original = await snapshot();
                 const assertCurrent = () => {
                     if (disposed || operation.controller.signal.aborted || revision !== originalRevision) {
                         throw failure('PROJECT_CHANGED', 'The project changed or extension addition was cancelled');
@@ -211,6 +241,36 @@ export const createExtensionAuthoringController = (vm: ScratchVM, {
         add (request: Port, options?: ApplyOptions) {
             return this.apply(request, options);
         },
+        applyDevelopmentBuild (build: DevelopmentBuild & {bytes: Uint8Array},
+            authorize: (build: Readonly<DevelopmentBuild>) => Promise<boolean>, options?: ApplyOptions) {
+            const {id, sha256, previousSHA256} = build;
+            if (!sha256Pattern.test(sha256) || (previousSHA256 !== undefined && !sha256Pattern.test(previousSHA256))) {
+                return Promise.reject(failure('INVALID_ADDITION', 'A development build requires exact SHA-256 values'));
+            }
+            const approval = {id, sha256, previousSHA256, previousInterface: undefined as string | undefined};
+            const request = {id, execution: 'sandboxed' as const, source: {type: 'embedded-file' as const},
+                bytes: new Uint8Array(build.bytes)};
+            return this.apply(request, options, async (input: unknown, candidate: typeof request, authoringPorts: AuthoringPorts,
+                preparation: Parameters<typeof prepareExtensionAddition>[3]) => {
+                if (!(await authorize(Object.freeze({id, sha256, previousSHA256}))) || preparation.signal?.aborted) {
+                    throw failure('DEVELOPMENT_BUILD_DENIED', 'The Desktop session did not authorize this build');
+                }
+                if (previousSHA256 !== undefined) {
+                    approval.previousInterface = ports?.registrar?.sandboxedInterface(id);
+                    if (approval.previousInterface === undefined) {
+                        throw failure('DEVELOPMENT_BUILD_CHANGED', 'The previous development build is no longer registered');
+                    }
+                }
+                approvedBuild = approval;
+                return prepareExtensionAddition(input, candidate, authoringPorts, {...preparation, developmentBuild: approval});
+            }, () => {
+                const archive = vm._saveProjectZip();
+                archive.file('project.json', vm.toJSON(undefined, {allowOptimization: false}));
+                return archive.generateAsync({type: 'arraybuffer'});
+            }).finally(() => {
+                if (approvedBuild === approval) approvedBuild = null;
+            });
+        },
         configure (requests: Port, options?: ApplyOptions) {
             return this.apply(requests, options, prepareCatalogExtensionChanges);
         },
@@ -226,10 +286,12 @@ export const createExtensionAuthoringController = (vm: ScratchVM, {
         },
         dispose () {
             disposed = true;
+            approvedBuild = null;
             pending?.controller.abort();
             vm.off('PROJECT_CHANGED', changed);
             for (const callback of disposalListeners) callback();
             disposalListeners.clear();
+            replacementListeners.clear();
         }
     });
 };

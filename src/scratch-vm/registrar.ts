@@ -24,6 +24,7 @@ const MODULES = ['ScratchCommon', 'createTranslate', 'staticFetch', 'dispatch'] 
 interface RegistrarOptions {
     registrationTimeoutMs?: number;
     vmModules?: VMModules;
+    checkSandboxedInterface?(code: AuthorizedCode, signature: string): void;
 }
 interface RegistrationRecord {
     id: string;
@@ -34,6 +35,7 @@ interface RegistrationRecord {
     serviceOwned?: boolean;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     sandboxed?: any;
+    sandboxedInterface?: string;
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Provider = any;
@@ -189,7 +191,8 @@ function createScratchAPI(vm: ScratchVM, register: (object: Provider) => void, {
  * records reach evaluation. This boundary does not decide trust or fetch code.
  * Registration rollback cannot undo arbitrary privileged JavaScript side effects.
  */
-export function createVMExtensionRegistrar(vm: ScratchVM, {registrationTimeoutMs = 30000, vmModules}: RegistrarOptions = {}) {
+export function createVMExtensionRegistrar(vm: ScratchVM, {registrationTimeoutMs = 30000, vmModules,
+    checkSandboxedInterface}: RegistrarOptions = {}) {
     assertHost(vm);
     if (!Number.isSafeInteger(registrationTimeoutMs) || registrationTimeoutMs < 1) {
         throw new TypeError('registrationTimeoutMs must be a positive integer');
@@ -251,7 +254,7 @@ export function createVMExtensionRegistrar(vm: ScratchVM, {registrationTimeoutMs
             }
             const sandboxed = await services.loadSandboxed({id: authorized.id, code: authorized.code,
                 signal, timeoutMs: registrationTimeoutMs});
-            const record = {id: authorized.id, service: sandboxed.service, worker: sandboxed.workerId, sandboxed};
+            const record: RegistrationRecord = {id: authorized.id, service: sandboxed.service, worker: sandboxed.workerId, sandboxed};
             try {
                 checkSignal(signal);
                 if (sandboxed.id !== authorized.id || sandboxed.info?.id !== authorized.id) {
@@ -259,6 +262,16 @@ export function createVMExtensionRegistrar(vm: ScratchVM, {registrationTimeoutMs
                 }
                 assertAvailable(vm, authorized.id);
                 const prepared = manager._prepareExtensionInfo(record.service, sandboxed.info);
+                if (checkSandboxedInterface) {
+                    const blocks = prepared.blocks.filter((block: {opcode?: unknown}) => typeof block?.opcode === 'string')
+                        .map((block: {opcode: string; blockType: string; arguments?: Record<string, {type?: string; menu?: string}>}) =>
+                            [block.opcode, block.blockType, Object.entries(block.arguments ?? {}).map(([id, arg]) =>
+                                [id, arg?.type, arg?.menu]).sort()]).sort();
+                    const signature = JSON.stringify([blocks, Object.keys(prepared.menus ?? {}).sort(),
+                        [...(prepared.targetTypes ?? [])].sort()]);
+                    checkSandboxedInterface(authorized, signature);
+                    record.sandboxedInterface = signature;
+                }
                 runtime._registerExtensionPrimitives(prepared);
                 manager._loadedExtensions.set(record.id, record.service);
                 runtime.resetAllCaches();
@@ -346,6 +359,9 @@ export function createVMExtensionRegistrar(vm: ScratchVM, {registrationTimeoutMs
     }
 
     return Object.freeze({
+        sandboxedInterface (id: string) {
+            return committed.get(id)?.sandboxedInterface;
+        },
         prepareLegacyReplacement(ids: readonly string[]) {
             if (typeof services.prepareLegacyReplacement !== 'function') {
                 throw error('UNSUPPORTED_HOST', 'This VM cannot replace legacy extension registrations');
