@@ -149,11 +149,14 @@ export interface LoaderPorts {
 export interface LoaderOptions {maxExtensions?: number; maxBytes?: number; maxTotalBytes?: number; timeoutMs?: number}
 export interface LoadResult {readonly ids: readonly string[]; readonly manifest: Manifest | null}
 export type LoaderStatus = 'idle' | 'loading' | 'loaded' | 'unloading' | 'failed';
+export type LoadedExtensionIdentity = Readonly<Pick<ExtensionSpec, 'id' | 'sha256' | 'execution'>>;
 export interface ExtensionLoader {
     load(manifest: unknown, options?: OperationOptions): Promise<LoadResult>;
     loadProject(project: unknown, options?: OperationOptions): Promise<LoadResult>;
     unload(): Promise<void>;
     getState(): Readonly<{status: LoaderStatus; ids: readonly string[]}>;
+    /** A snapshot of committed registrations. The receiving host must still apply its own trust policy. */
+    getLoadedExtensionIdentities(): readonly LoadedExtensionIdentity[];
 }
 
 type Mutable<T> = {-readonly [K in keyof T]: T[K]};
@@ -499,7 +502,9 @@ export function createExtensionLoader(ports: LoaderPorts, options: LoaderOptions
     for (const key of Object.keys(DEFAULTS) as (keyof typeof DEFAULTS)[]) if (!Number.isSafeInteger(limits[key]) || limits[key] < 1) fail('INVALID_OPTIONS', `Invalid ${key}`);
     if (typeof ports?.trustProvider?.authorize !== 'function' || typeof ports?.registrar?.begin !== 'function' || typeof ports?.registrar?.unload !== 'function') fail('INVALID_PORT', 'Explicit host trust and transactional registrar ports are required');
     let state: LoaderStatus = 'idle';
-    let loaded: string[] = [];
+    const noExtensions: readonly LoadedExtensionIdentity[] = Object.freeze([]);
+    let loaded = noExtensions;
+    const loadedIds = () => Object.freeze(loaded.map(({id}) => id));
     const report = (event: DiagnosticEvent) => { try { ports.diagnostics?.(Object.freeze({...event})); } catch { /* Diagnostics must not alter authorization. */ } };
 
     async function resolve(spec: ExtensionSpec, signal: AbortSignal, budget: {bytes: number}, declineCaching?: ReadonlySet<string>): Promise<ResolvedCode> {
@@ -600,10 +605,12 @@ export function createExtensionLoader(ports: LoaderPorts, options: LoaderOptions
                 await transaction.commit({signal});
                 checkSignal(signal);
             }
-            loaded = authorized.map(code => code.id);
+            loaded = Object.freeze(authorized.map(({id, actualSHA256, execution}) =>
+                Object.freeze({id, sha256: actualSHA256, execution})));
             state = 'loaded';
-            report({type: 'loaded', ids: Object.freeze([...loaded])});
-            return Object.freeze({ids: Object.freeze([...loaded]), manifest});
+            const ids = loadedIds();
+            report({type: 'loaded', ids});
+            return Object.freeze({ids, manifest});
         } catch (cause) {
             let error = cause instanceof LoaderError ? cause : new LoaderError('LOAD_FAILED', 'Extension load failed', undefined, cause);
             if (transaction) {
@@ -643,9 +650,14 @@ export function createExtensionLoader(ports: LoaderPorts, options: LoaderOptions
             if (state === 'failed') fail('HOST_RECOVERY_REQUIRED', 'Recover the host after failed rollback');
             if (state === 'idle') return;
             state = 'unloading';
-            try { await ports.registrar.unload([...loaded].reverse()); loaded = []; state = 'idle'; }
+            try {
+                await ports.registrar.unload(loaded.map(({id}) => id).reverse());
+                loaded = noExtensions;
+                state = 'idle';
+            }
             catch (cause) { state = 'failed'; throw new LoaderError('UNLOAD_FAILED', 'Host could not unload extensions', undefined, cause); }
         },
-        getState: () => Object.freeze({status: state, ids: Object.freeze([...loaded])})
+        getState: () => Object.freeze({status: state, ids: loadedIds()}),
+        getLoadedExtensionIdentities: () => state === 'loaded' ? loaded : noExtensions
     });
 }

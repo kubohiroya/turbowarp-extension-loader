@@ -61,6 +61,7 @@ export interface ExtensionHostOptions {
     fetchImpl?: typeof fetch;
     cache?: LoaderPorts['cache'];
     requestApproval?: SessionTrustOptions['requestApproval'];
+    canLoadVerifiedCode?: SessionTrustOptions['canLoadVerifiedCode'];
     diagnostics?: (event: HostDiagnostic) => void;
     loaderOptions?: LoaderOptions;
     hostPolicy?: Parameters<typeof createSessionTrustProvider>[0]['hostPolicy'];
@@ -92,7 +93,8 @@ export function createScratchVMExtensionHost<Channel extends ReviewChannelPort>(
     /** Host-controlled wiring shared by the Editor and the bundled HTML runtime. */
     function installPlusExtensionHost (vm: ScratchVM, {
         enabled = false, document = globalThis.document, locale = 'ja', getLocale, fetchImpl = globalThis.fetch,
-        cache, requestApproval, diagnostics: report, loaderOptions, hostPolicy, trustedCatalog = null, trustedDigests,
+        cache, requestApproval, canLoadVerifiedCode, diagnostics: report, loaderOptions, hostPolicy,
+        trustedCatalog = null, trustedDigests,
         fetchRetry, markLoadFailure, archiveOptions = {}, gateProjectIO, vmModules, createAuthoring, setAuthoringHost,
         onProjectURI, addressProject, onProjectManifest, captureProjectProgress, projectArchives, runProjectLoad, waitForUser,
         createPayloads, showDiagnostics = true
@@ -150,7 +152,7 @@ export function createScratchVMExtensionHost<Channel extends ReviewChannelPort>(
             // a row its author runs outside does not have it run there.
             return code.execution === 'sandboxed' || decision.execution === 'unsandboxed';
         };
-        const sessionTrust = createSessionTrustProvider({hostPolicy,
+        const sessionTrust = createSessionTrustProvider({hostPolicy, canLoadVerifiedCode,
             // Catalog-listed code is trusted like TurboWarp's official gallery and needs no separate approval.
             requestApproval: async (code, options) => {
                 if (trusted !== null && await trusted.isTrustedCode(code)) return true;
