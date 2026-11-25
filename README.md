@@ -393,6 +393,8 @@ Publishing to npm is only a way to deliver verified code to a host. Obtaining th
 
 `test/scratch-vm/editor-project-uri.test.ts` carries five Editor #741 cases for URI assignment through the authoring controller: HTTPS-only allocation, the UUID path shape, unchanged existing addresses and empty catalog changes. It uses the built public API with an EventEmitter-based VM stand-in and needs no GUI checkout or real VM. Test bodies and fixtures are unchanged. The existing `npm test` and CI run these cases. Editor keeps its real-VM URI and open-review wiring test, and its originals stay until successful upstream CI and merge. The migrated tests retain GPL-3.0-or-later under `test/LICENSE.GPL-3.0` and remain outside the npm archive. Revert the added tests and documentation to undo the migration, restoring the Editor originals first if removed.
 
+`test/scratch-vm/editor-save-address.test.ts` carries five Editor #741 save-time URI cases: first-save allocation and reuse, ZIP/file saves versus sprite exports, retaining existing URIs, absent manifests or addressing ports, and resetting state when another project opens. It uses the public `createProjectIO` and `installExtensionLoader` APIs with a VM stand-in, retaining test bodies, fixtures and GPL-3.0-or-later (`test/LICENSE.GPL-3.0`). No GUI checkout or real VM is needed. The existing `npm test` and CI run these cases; tests are excluded from the npm archive. Editor retains five real-VM, HTTPS, cache and single-HTML wiring checks, removing duplicates after upstream CI succeeds and the migration is merged. To roll back, restore the Editor originals before reverting the added tests and documentation.
+
 ## License
 
 [MPL-2.0](LICENSE)
