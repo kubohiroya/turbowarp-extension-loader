@@ -11,7 +11,7 @@
  * screen states the failure.
  */
 
-import {isWorthAskingAgain, validateManifest, type Manifest, type OperationOptions} from '../index.js';
+import {isWorthAskingAgain, validateManifest, type ExtensionSpec, type Manifest, type OperationOptions} from '../index.js';
 import type {ScratchVM} from './vm.js';
 
 import {projectSerializationOptions} from './serialization-context.js';
@@ -40,7 +40,7 @@ export interface ProjectLoaderHost {
     onProjectURI?(uri: string | undefined): void;
     addressProject?(): string | null | undefined;
     captureProjectProgress?(): ((stage: Stage) => void) | undefined;
-    onProjectLoadStart?(input: unknown): void;
+    onProjectLoadStart?(input: unknown): ExtensionSpec | void;
     onProjectManifest?(manifest: Manifest | null): void;
     onDiagnostic?(event: {type: 'project-error'; code: string; message: string; retryable: boolean}): void;
     runProjectLoad?<T>(run: () => Promise<T>): Promise<T>;
@@ -54,6 +54,7 @@ export interface ProjectExtensionLoader {
 }
 interface Loading {
     manifest: Manifest | null;
+    approvedAddition?: ExtensionSpec | void;
     signal: AbortSignal;
     loaded: boolean;
     registration: Promise<{readonly ids: readonly string[]}> | null;
@@ -190,7 +191,7 @@ export function installExtensionLoader(host: ProjectLoaderHost, loader: ProjectE
         checkActive();
         const progress = host.captureProjectProgress?.();
         const archive = host.projectArchives?.capture(vm);
-        if (host.onProjectLoadStart) host.onProjectLoadStart(input);
+        const approvedAddition = host.onProjectLoadStart?.(input);
         payloads?.loadStarted();
         pending++;
         const run = async () => {
@@ -230,7 +231,7 @@ export function installExtensionLoader(host: ProjectLoaderHost, loader: ProjectE
                 checkActive();
                 const context = prepared.context ?? null;
                 if (io.activate) io.activate(context);
-                loading = {manifest: prepared.manifest, signal: controller.signal, loaded: false, registration: null, progress};
+                loading = {manifest: prepared.manifest, approvedAddition, signal: controller.signal, loaded: false, registration: null, progress};
                 progress?.('project');
                 const runVM = (projectInput: unknown) => originals.loadProject.call(vm, projectInput, ...args);
                 const result = await (archive ? host.projectArchives.load(prepared.input, prepared.vmArchive, runVM) :
@@ -300,7 +301,13 @@ export function installExtensionLoader(host: ProjectLoaderHost, loader: ProjectE
             // extensions load as that review's own step, so they are not loaded a second time below.
             const others = [...ids].filter(id => !listed.has(id));
             const otherURLs = new Map([...urls].filter(([id]) => !listed.has(id)));
-            const answer = await extensionStep(() => host.review!(context.manifest!,
+            // An authoring load has already obtained approval for the exact added spec. Skip
+            // its duplicate UI row only; the real registration still verifies and authorizes it.
+            const manifest = context.manifest!;
+            const approved = context.approvedAddition;
+            const review = approved ? {...manifest, extensions: manifest.extensions.filter(spec =>
+                spec.id !== approved.id || JSON.stringify(spec) !== JSON.stringify(approved))} : manifest;
+            const answer = await extensionStep(() => host.review!(review,
                 () => originals._loadExtensions.call(vm, others, otherURLs, ...args), context.signal));
             checkActive();
             othersLoaded = true;

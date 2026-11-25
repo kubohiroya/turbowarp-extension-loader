@@ -9,7 +9,8 @@ import {markFetchRejection} from './fetch-rejection.js';
 export type ExtensionAdditionRequest = {
     id: string;
     execution?: ExecutionMode;
-    source: {type: 'embedded-file'; path?: string};
+    source: {type: 'embedded-file'; path?: string; url?: string};
+    version?: string;
     bytes: Uint8Array | Blob;
 } | {
     id: string;
@@ -23,6 +24,8 @@ export interface ExtensionAdditionOptions {
     signal?: AbortSignal;
     loaderOptions?: LoaderOptions;
     archiveOptions?: ArchiveLimits;
+    /** Replace only the exact embedded sandboxed predecessor of this development build. */
+    developmentBuild?: {sha256: string; previousSHA256?: string};
     /**
      * The address to give this project, or nothing to keep the one it has.
      *
@@ -62,10 +65,10 @@ export function prepareExtensionAddition(input: unknown, request: ExtensionAddit
  * A host approval is required before the candidate is returned; the original is untouched.
  */
 export async function prepareExtensionAddition(input: unknown, request: unknown, ports: AuthoringPorts, {
-    zip: Zip, signal: externalSignal, loaderOptions = {}, archiveOptions, uri
+    zip: Zip, signal: externalSignal, loaderOptions = {}, archiveOptions, uri, developmentBuild
 }: Partial<ExtensionAdditionOptions> = {}): Promise<PreparedExtensionAddition> {
     if (typeof Zip !== 'function' || typeof Zip.loadAsync !== 'function') throw new TypeError('A compatible JSZip constructor is required');
-    if (!plainObject(request) || Object.keys(request).some(key => !['id', 'source', 'bytes', 'execution'].includes(key))) {
+    if (!plainObject(request) || Object.keys(request).some(key => !['id', 'source', 'bytes', 'execution', 'version'].includes(key))) {
         fail('INVALID_ADDITION', 'An extension ID and file or URL source are required');
     }
     if (typeof ports?.trustProvider?.authorize !== 'function') fail('INVALID_PORT', 'An explicit host trust provider is required');
@@ -78,8 +81,11 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         {...request.source, path: `extensions/${request.id}.js`} : request.source;
     // Reuse the runtime schema before any bytes are read or network requests begin.
     const draft = validateManifest({schemaVersion: 1, extensions: [{id: request.id, source,
-        execution: request.execution === undefined ? 'unsandboxed' : request.execution,
+        execution: request.execution === undefined ? 'unsandboxed' : request.execution, version: request.version,
         sha256: '0'.repeat(64)}]}, loaderOptions).extensions[0];
+    if (developmentBuild && (draft.execution !== 'sandboxed' || draft.source.type !== 'embedded-file' || draft.source.url)) {
+        fail('INVALID_ADDITION', 'A development build must be a local sandboxed file', draft.id);
+    }
     if (isRemoteSource(draft.source) && request.bytes !== undefined) fail('INVALID_ADDITION', 'Remote sources must be fetched from their URL', draft.id);
     if (request.bytes instanceof Uint8Array && (request.bytes.byteLength < 1 || request.bytes.byteLength > limits.maxBytes)) {
         fail('INVALID_BYTES', 'Extension file is empty or exceeds the byte limit', draft.id);
@@ -119,15 +125,28 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         }
         if (project.extensionURLs !== undefined && !plainObject(project.extensionURLs)) fail('INVALID_PROJECT', 'Project extensionURLs must be an object');
         const previous = prepared.manifest?.extensions || [];
+        const old = previous.find(spec => spec.id === draft.id);
+        const oldSource = old?.source;
+        const replaces = developmentBuild?.previousSHA256 !== undefined;
+        if (replaces && (!old || old.sha256 !== developmentBuild?.previousSHA256 || old.execution !== 'sandboxed' ||
+            oldSource?.type !== 'embedded-file' || oldSource.url || old.capabilities.length || old.dependencies.length)) {
+            fail('DEVELOPMENT_BUILD_CHANGED', 'The project no longer runs the development session predecessor', draft.id);
+        }
+        if (replaces && oldSource?.type === 'embedded-file' && previous.some(spec => spec.id !== draft.id &&
+            spec.source.type === 'embedded-file' && spec.source.path === oldSource.path)) {
+            fail('SOURCE_PATH_COLLISION', 'The predecessor is shared by another extension', draft.id);
+        }
         // Carried through every rebuild below: an address that changed when an extension was
         // added would not be an address. The host may set one, which is how a project gets its
         // first; saying nothing keeps what is there.
         const address = uri ?? prepared.manifest?.uri;
         const carried = address === undefined ? {} : {uri: address};
-        if (previous.some(spec => spec.id === draft.id) || (project.extensions || []).includes(draft.id) ||
+        if ((!replaces && (old || (project.extensions || []).includes(draft.id))) ||
             Object.hasOwn(project.extensionURLs || {}, draft.id)) fail('DUPLICATE_EXTENSION', 'This extension ID already belongs to the project', draft.id);
-        validateManifest({schemaVersion: 1, ...carried, extensions: [...previous, draft]}, loaderOptions);
-        if (draft.source.type === 'embedded-file' && Object.hasOwn(files, draft.source.path)) {
+        const withSpec = (spec: ExtensionSpec) => replaces ? previous.map(item => item.id === spec.id ? spec : item) : [...previous, spec];
+        validateManifest({schemaVersion: 1, ...carried, extensions: withSpec(draft)}, loaderOptions);
+        if (draft.source.type === 'embedded-file' && Object.hasOwn(files, draft.source.path) &&
+            !(replaces && oldSource?.type === 'embedded-file' && oldSource.path === draft.source.path)) {
             fail('SOURCE_PATH_COLLISION', 'The embedded path already exists in this project', draft.id);
         }
         let bytes: unknown;
@@ -153,11 +172,13 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         }
         const verified = new Uint8Array(bytes);
         const sha256 = await wait(() => digest(verified));
-        const manifest = validateManifest({schemaVersion: 1, ...carried, extensions: [...previous, {...draft, sha256}]}, loaderOptions);
+        if (developmentBuild && developmentBuild.sha256 !== sha256) fail('DIGEST_MISMATCH', 'The development build bytes changed', draft.id);
+        const manifest = validateManifest({schemaVersion: 1, ...carried, extensions: withSpec({...draft, sha256})}, loaderOptions);
         const spec = manifest.extensions.find(item => item.id === draft.id)!;
         project.turboWarpPlus = manifest;
-        project.extensions = [...(project.extensions || []), spec.id];
+        if (!(project.extensions || []).includes(spec.id)) project.extensions = [...(project.extensions || []), spec.id];
         files['project.json'] = encoder.encode(JSON.stringify(project));
+        if (replaces && oldSource?.type === 'embedded-file') delete files[oldSource.path];
         if (spec.source.type === 'embedded-file') files[spec.source.path] = verified;
         const archive = new Zip();
         for (const [path, content] of Object.entries(files)) archive.file(path, content, {dir: path.endsWith('/'), createFolders: false});

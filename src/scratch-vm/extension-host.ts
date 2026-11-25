@@ -61,6 +61,7 @@ export interface ExtensionHostOptions {
     fetchImpl?: typeof fetch;
     cache?: LoaderPorts['cache'];
     requestApproval?: SessionTrustOptions['requestApproval'];
+    canLoadVerifiedCode?: SessionTrustOptions['canLoadVerifiedCode'];
     diagnostics?: (event: HostDiagnostic) => void;
     loaderOptions?: LoaderOptions;
     hostPolicy?: Parameters<typeof createSessionTrustProvider>[0]['hostPolicy'];
@@ -92,7 +93,8 @@ export function createScratchVMExtensionHost<Channel extends ReviewChannelPort>(
     /** Host-controlled wiring shared by the Editor and the bundled HTML runtime. */
     function installPlusExtensionHost (vm: ScratchVM, {
         enabled = false, document = globalThis.document, locale = 'ja', getLocale, fetchImpl = globalThis.fetch,
-        cache, requestApproval, diagnostics: report, loaderOptions, hostPolicy, trustedCatalog = null, trustedDigests,
+        cache, requestApproval, canLoadVerifiedCode, diagnostics: report, loaderOptions, hostPolicy,
+        trustedCatalog = null, trustedDigests,
         fetchRetry, markLoadFailure, archiveOptions = {}, gateProjectIO, vmModules, createAuthoring, setAuthoringHost,
         onProjectURI, addressProject, onProjectManifest, captureProjectProgress, projectArchives, runProjectLoad, waitForUser,
         createPayloads, showDiagnostics = true
@@ -150,7 +152,7 @@ export function createScratchVMExtensionHost<Channel extends ReviewChannelPort>(
             // a row its author runs outside does not have it run there.
             return code.execution === 'sandboxed' || decision.execution === 'unsandboxed';
         };
-        const sessionTrust = createSessionTrustProvider({hostPolicy,
+        const sessionTrust = createSessionTrustProvider({hostPolicy, canLoadVerifiedCode,
             // Catalog-listed code is trusted like TurboWarp's official gallery and needs no separate approval.
             requestApproval: async (code, options) => {
                 if (trusted !== null && await trusted.isTrustedCode(code)) return true;
@@ -160,10 +162,22 @@ export function createScratchVMExtensionHost<Channel extends ReviewChannelPort>(
         // The session remembers an approval for the rest of the visit, but what the person answers on
         // this load's review is newer than anything it remembers: a refusal there is a refusal now,
         // even for code an earlier load was allowed to run.
+        let authoring: ReturnType<typeof createExtensionAuthoringController> | null = null;
+        const hasURLPolicy = Boolean(hostPolicy?.canLoadExtensionFromProject || hostPolicy?.getSandboxMode);
+        const locallyApproved = (spec: Manifest['extensions'][number] | ResolvedCode) =>
+            !hasURLPolicy && authoring?.isDevelopmentBuildApproved(spec) === true;
         const trustProvider: typeof sessionTrust = Object.freeze({
             ...sessionTrust,
-            authorize: (code: ResolvedCode, options?: {signal?: AbortSignal}) => (answered(code) === false ?
-                Promise.resolve(Object.freeze({allowed: false})) : sessionTrust.authorize(code, options))
+            async authorize (code: ResolvedCode, options?: {signal?: AbortSignal}) {
+                if (answered(code) === false) return {allowed: false};
+                if (locallyApproved(code)) {
+                    options?.signal?.throwIfAborted();
+                    if (canLoadVerifiedCode && !(await canLoadVerifiedCode(code, options ?? {}))) return {allowed: false};
+                    options?.signal?.throwIfAborted();
+                    if (locallyApproved(code)) return {allowed: true, scope: 'digest' as const, sha256: code.actualSHA256};
+                }
+                return sessionTrust.authorize(code, options);
+            }
         });
         /**
          * Put a load's Plus rows in front of the person on the review that asks about its other
@@ -174,7 +188,7 @@ export function createScratchVMExtensionHost<Channel extends ReviewChannelPort>(
          * @returns {Promise<object>} `declineCaching` for `load()`, and `release` once it settles.
          */
         const review = async (manifest: Manifest, run: () => Promise<unknown>, signal: AbortSignal) => {
-            const channel = openReview(vm, manifest, path =>
+            const channel = openReview(vm, {...manifest, extensions: manifest.extensions.filter(spec => !locallyApproved(spec))}, path =>
                 projectIO.embeddedReader.read(path, {signal, maxBytes: loaderOptions?.maxBytes}));
             try {
                 await run();
@@ -195,7 +209,8 @@ export function createScratchVMExtensionHost<Channel extends ReviewChannelPort>(
             fetcher: createFetchPort(fetchImpl, {...fetchRetry, onRetry}),
             cache: cache || createMemoryContentCache(),
             trustProvider,
-            registrar: createVMExtensionRegistrar(vm, {vmModules}),
+            registrar: createVMExtensionRegistrar(vm, {vmModules, checkSandboxedInterface: createAuthoring ?
+                (code, signature) => authoring?.checkDevelopmentInterface(code, signature) : undefined}),
             diagnostics
         };
         const loader = createExtensionLoader(ports, loaderOptions);
@@ -203,7 +218,7 @@ export function createScratchVMExtensionHost<Channel extends ReviewChannelPort>(
         // A player built as a single HTML has no library to add an extension from, so its entry
         // supplies no controller: passing the factory in rather than importing it here is what keeps
         // the controller, and everything it pulls in, out of that bundle.
-        const authoring = typeof createAuthoring === 'function' ?
+        authoring = typeof createAuthoring === 'function' ?
             createAuthoring(vm, {ports, diagnostics, loaderOptions, archiveOptions, zip: JSZip}) : null;
         let uninstall: ReturnType<typeof installExtensionLoader>;
         try {
