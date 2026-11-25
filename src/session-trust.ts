@@ -2,6 +2,8 @@ import {isRemoteSource, LoaderError, type AuthorizationDecision, type ResolvedCo
 
 export interface SessionTrustOptions {
     requestApproval(code: ResolvedCode, options: {signal?: AbortSignal}): Promise<boolean>;
+    /** A host restriction on this operation, checked before new or remembered approval. */
+    canLoadVerifiedCode?(code: ResolvedCode, options: {signal?: AbortSignal}): boolean | Promise<boolean>;
     maxApprovals?: number;
     hostPolicy?: {
         canLoadExtensionFromProject?(url: string, options?: {signal?: AbortSignal}): boolean | Promise<boolean>;
@@ -16,14 +18,17 @@ export type SessionTrustProvider = Readonly<{
 
 /** Host-owned approvals bind an exact verified request for this session only. */
 export function createSessionTrustProvider(options: SessionTrustOptions): SessionTrustProvider;
-export function createSessionTrustProvider({requestApproval, maxApprovals = 128, hostPolicy}: Partial<SessionTrustOptions> = {}): SessionTrustProvider {
+export function createSessionTrustProvider({
+    requestApproval, canLoadVerifiedCode, maxApprovals = 128, hostPolicy
+}: Partial<SessionTrustOptions> = {}): SessionTrustProvider {
     if (typeof requestApproval !== 'function' || !Number.isSafeInteger(maxApprovals) || maxApprovals < 1) {
         throw new TypeError('A host approval prompt and bounded approval capacity are required');
     }
     const approvals = new Map<string, true>();
     const policy = Object.freeze({
         canLoad: hostPolicy && hostPolicy.canLoadExtensionFromProject,
-        mode: hostPolicy && hostPolicy.getSandboxMode
+        mode: hostPolicy && hostPolicy.getSandboxMode,
+        canLoadVerifiedCode
     });
     for (const port of Object.values(policy)) {
         if (port !== undefined && typeof port !== 'function') throw new TypeError('Host policy ports must be functions');
@@ -36,6 +41,11 @@ export function createSessionTrustProvider({requestApproval, maxApprovals = 128,
         async authorize(code: ResolvedCode, {signal}: {signal?: AbortSignal} = {}): Promise<AuthorizationDecision> {
             check(signal);
             if (code.actualSHA256 !== code.sha256) throw new LoaderError('INVALID_AUTHORIZATION', 'Only verified extension requests may be reviewed');
+            if (policy.canLoadVerifiedCode) {
+                const allowed = await policy.canLoadVerifiedCode(code, {signal});
+                check(signal);
+                if (allowed !== true) return Object.freeze({allowed: false});
+            }
             // An existing URL-only host policy cannot authorize an archive path.
             // Recheck before cached consent so later host restrictions take precedence.
             if (policy.canLoad || policy.mode) {

@@ -33,6 +33,25 @@ test('denial, unverified content and cancellation never create approval', async 
     await assert.rejects(provider.authorize(code, {signal: AbortSignal.abort()}), {code: 'CANCELLED'});
 });
 
+test('an operation can refuse previously approved embedded code without changing its execution mode', async () => {
+    const embedded: ResolvedCode = {
+        ...code, execution: 'sandboxed', source: {type: 'embedded-file', path: 'extensions/example.js'}
+    };
+    let activeDigest: string | undefined = embedded.sha256;
+    let prompts = 0;
+    const provider = createSessionTrustProvider({
+        canLoadVerifiedCode: candidate => candidate.execution === 'sandboxed' && candidate.sha256 === activeDigest,
+        async requestApproval() { prompts++; return true; }
+    });
+    assert.equal((await provider.authorize(embedded)).allowed, true);
+    assert.deepEqual(await provider.authorize({...embedded, execution: 'unsandboxed'}), {allowed: false});
+    activeDigest = undefined;
+    // The same bytes may already be in the session cache from another run.
+    assert.equal(provider.getApprovalCount(), 1);
+    assert.deepEqual(await provider.authorize(embedded), {allowed: false});
+    assert.equal(prompts, 1);
+});
+
 test('approval arriving after revocation or cancellation cannot be retained', async () => {
     let respond: ((approved: boolean) => void) | undefined;
     const provider = createSessionTrustProvider({requestApproval: () => new Promise(resolve => { respond = resolve; })});

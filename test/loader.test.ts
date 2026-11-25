@@ -79,6 +79,47 @@ test('all extensions are verified and authorized before any registration, in dep
     assert.deepEqual(calls.find(call => call[0] === 'unload')![1], ['a', 'b']);
 });
 
+test('loaded identities come from committed, verified code and disappear as soon as unload starts', async () => {
+    let startedCommit!: () => void;
+    let finishCommit!: () => void;
+    let finishUnload!: () => void;
+    const committing = new Promise<void>(resolve => { startedCommit = resolve; });
+    const canCommit = new Promise<void>(resolve => { finishCommit = resolve; });
+    const canUnload = new Promise<void>(resolve => { finishUnload = resolve; });
+    let bytes = fixture;
+    const {loader} = host({embeddedReader: {async read() { return bytes; }}, registrar: {
+        async begin() {
+            return {
+                async register(code: AuthorizedCode) { return {id: code.id}; },
+                async commit() { startedCommit(); await canCommit; },
+                async rollback() {}
+            };
+        },
+        async unload() { await canUnload; }
+    }});
+    const candidate = {...spec(), execution: 'sandboxed'};
+    const loading = loader.load(manifest(candidate));
+    await committing;
+    assert.deepEqual(loader.getLoadedExtensionIdentities(), []);
+    finishCommit();
+    await loading;
+    const snapshot = loader.getLoadedExtensionIdentities();
+    assert.deepEqual(snapshot, [{id: 'fixture', sha256: hash(fixture), execution: 'sandboxed'}]);
+    assert.ok(Object.isFrozen(snapshot) && Object.isFrozen(snapshot[0]));
+
+    const unloading = loader.unload();
+    assert.deepEqual(loader.getLoadedExtensionIdentities(), []);
+    finishUnload();
+    await unloading;
+    assert.deepEqual(loader.getLoadedExtensionIdentities(), []);
+
+    bytes = new TextEncoder().encode('// Rebuilt fixture');
+    const updatedDigest = hash(bytes);
+    await loader.load(manifest({...candidate, sha256: updatedDigest}));
+    assert.deepEqual(loader.getLoadedExtensionIdentities(), [{id: 'fixture', sha256: updatedDigest, execution: 'sandboxed'}]);
+    assert.equal(snapshot[0]?.sha256, hash(fixture));
+});
+
 test('execution mode remains exact across Embedded and Remote validation, approval and registration', async () => {
     for (const execution of ['sandboxed', 'unsandboxed']) {
         for (const source of [{type: 'embedded-file', path: 'extensions/fixture.js'},
@@ -250,10 +291,12 @@ test('commit failure rolls back and unload failure requires host recovery', asyn
     const {loader} = host({registrar: {async begin() { return {async register(code: AuthorizedCode) { return {id: code.id}; }, async commit() { throw Error('commit failed'); }, async rollback() { rollbacks++; }}; }, async unload() {}}});
     await assert.rejects(loader.load(manifest()), codeIs('LOAD_FAILED'));
     assert.equal(rollbacks, 1);
+    assert.deepEqual(loader.getLoadedExtensionIdentities(), []);
     const failed = host({registrar: {async begin() { return {async register(code: AuthorizedCode) { return {id: code.id}; }, async commit() {}, async rollback() {}}; }, async unload() { throw Error('unload failed'); }}});
     await failed.loader.load(manifest());
     await assert.rejects(failed.loader.unload(), codeIs('UNLOAD_FAILED'));
     assert.equal(failed.loader.getState().status, 'failed');
+    assert.deepEqual(failed.loader.getLoadedExtensionIdentities(), []);
     await assert.rejects(failed.loader.load(manifest()), codeIs('BUSY'));
 });
 
