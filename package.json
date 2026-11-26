@@ -132,7 +132,10 @@
     "scratch-vm/catalog-settings.js",
     "scratch-vm/catalog-load.js",
     "scratch-vm/extension-host.js",
-    "scratch-vm/project-size-gate.js"
+    "scratch-vm/project-size-gate.js",
+    "packager-page.js",
+    "packager-handoff.js",
+    "catalog-trust.js"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p test",
