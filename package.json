@@ -1,6 +1,6 @@
 {
   "name": "@kubohiroya/turbowarp-extension-loader",
-  "version": "0.16.2",
+  "version": "0.16.3",
   "description": "Host-independent verified TurboWarp Plus extension loading core",
   "keywords": [
     "turbowarp",
