@@ -25,7 +25,12 @@ export interface ExtensionAdditionOptions {
     loaderOptions?: LoaderOptions;
     archiveOptions?: ArchiveLimits;
     /** Replace only the exact embedded sandboxed predecessor of this development build. */
-    developmentBuild?: {sha256: string; previousSHA256?: string};
+    developmentBuild?: {
+        sha256: string;
+        previousSHA256?: string;
+        /** Match the prepared local build against the host's development session before review. */
+        authorize?: (spec: ExtensionSpec, signal: AbortSignal) => void | Promise<void>;
+    };
     /**
      * The address to give this project, or nothing to keep the one it has.
      *
@@ -185,6 +190,13 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         const projectBytes: Uint8Array = await wait(() => archive.generateAsync({type: 'uint8array', compression: 'STORE'}));
         const candidate = await wait(() => io.prepare(projectBytes, {signal}));
         io.activate(candidate.context);
+        // No session decision is requested until the candidate has passed the project, manifest,
+        // byte and digest checks. The regular runtime digest authorization still applies below.
+        if (developmentBuild?.authorize) {
+            await wait(() => developmentBuild.authorize!(spec, signal));
+            check();
+        }
+
         // Only the newly fetched URL is snapshotted. Other pinned sources keep the host's fetch policy.
         const pinned = spec.source;
         const fetcher: FetchPort | undefined = isRemoteSource(pinned) ? {

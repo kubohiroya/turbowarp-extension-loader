@@ -3,6 +3,7 @@ import {hostError} from './test-errors.ts';
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
+import {createHash} from 'node:crypto';
 import Zip from '@turbowarp/jszip';
 import {createExtensionAuthoringController} from '@kubohiroya/turbowarp-extension-loader/scratch-vm';
 const spec = {id: 'example', sha256: 'a'.repeat(64)};
@@ -168,4 +169,93 @@ test('a change the Loader could not prepare is reported, so a waiting indicator 
         prepareAddition: async () => { throw failed; }, diagnostics: () => { throw new Error('presentation'); }});
     await assert.rejects(quiet.add({id: 'example'}, undefined), error => error === failed);
     quiet.dispose();
+});
+
+const developmentProject = () => ({targets: [{isStage: true, name: 'Stage', blocks: {}}], extensions: []});
+function developmentFixture(digestAllowed = true) {
+    const saved = developmentProject();
+    const loads: Uint8Array[] = [];
+    const events: string[] = [];
+    const vm = Object.assign(new EventEmitter(), {
+        _saveProjectZip: () => new Zip(),
+        toJSON: () => JSON.stringify(saved),
+        extensionManager: {isExtensionLoaded: () => false},
+        async loadProject(bytes: Uint8Array) {
+            controller.projectLoadStarted(bytes);
+            events.push('load');
+            loads.push(bytes);
+        }
+    });
+    const controller = createExtensionAuthoringController(vm, {zip: Zip, ports: {
+        trustProvider: {async authorize(spec) {
+            events.push('digest-trust');
+            return {allowed: digestAllowed, scope: 'digest' as const, sha256: spec.sha256};
+        }}
+    }});
+    return {controller, events, loads};
+}
+const developmentCandidate = () => {
+    const bytes = new TextEncoder().encode('// inert test fixture; never executed');
+    return {id: 'devfixture', bytes, sha256: createHash('sha256').update(bytes).digest('hex')};
+};
+
+test('development authoring verifies bytes before approval, then still requires digest trust', async () => {
+    const {controller, events, loads} = developmentFixture();
+    try {
+        const candidate = developmentCandidate();
+        const approve = async () => {events.push('desktop-session'); return true;};
+        await assert.rejects(controller.applyDevelopmentBuild({...candidate, sha256: '0'.repeat(64)}, approve),
+            {code: 'DIGEST_MISMATCH'});
+        assert.deepEqual(events, []);
+        const pinned = candidate.bytes.slice();
+        const pending = controller.applyDevelopmentBuild(candidate, approve);
+        candidate.bytes.fill(0);
+        assert.equal((await pending).sha256, candidate.sha256);
+        assert.deepEqual(events, ['desktop-session', 'digest-trust', 'load']);
+        const reopened = await Zip.loadAsync(loads[0]!);
+        assert.deepEqual(await reopened.file('extensions/devfixture.js')!.async('uint8array'), pinned);
+        assert.equal(controller.isApplyingDevelopmentBuild(), false);
+    } finally {
+        controller.dispose();
+    }
+});
+
+test('a replacement project cancels pending session approval without permitting late registration', async () => {
+    const {controller, events, loads} = developmentFixture();
+    const decision = deferred<boolean>();
+    const entered = deferred<void>();
+    try {
+        const pending = controller.applyDevelopmentBuild(developmentCandidate(), async () => {
+            entered.resolve();
+            return decision.promise;
+        });
+        await entered.promise;
+        const rejected = assert.rejects(pending, {code: 'CANCELLED'});
+        controller.projectLoadStarted(new Uint8Array([9]));
+        await rejected;
+        assert.equal(controller.isApplyingDevelopmentBuild(), false);
+        decision.resolve(true);
+        await Promise.resolve();
+        assert.deepEqual(events, []);
+        assert.deepEqual(loads, []);
+        assert.equal(controller.isApplyingDevelopmentBuild(), false);
+    } finally {
+        controller.dispose();
+    }
+});
+
+
+test('a verified development session cannot override a digest trust refusal', async () => {
+    const {controller, events, loads} = developmentFixture(false);
+    try {
+        await assert.rejects(controller.applyDevelopmentBuild(developmentCandidate(), async () => {
+            events.push('desktop-session');
+            return true;
+        }), {code: 'TRUST_DENIED'});
+        assert.deepEqual(events, ['desktop-session', 'digest-trust']);
+        assert.deepEqual(loads, []);
+        assert.equal(controller.isApplyingDevelopmentBuild(), false);
+    } finally {
+        controller.dispose();
+    }
 });
