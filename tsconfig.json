@@ -66,6 +66,15 @@
       ],
       "@kubohiroya/turbowarp-extension-loader/scratch-vm/project-size-gate": [
         "./src/scratch-vm/project-size-gate.ts"
+      ],
+      "@kubohiroya/turbowarp-extension-loader/catalog-trust": [
+        "./src/catalog-trust.ts"
+      ],
+      "@kubohiroya/turbowarp-extension-loader/packager-handoff": [
+        "./src/packager-handoff.ts"
+      ],
+      "@kubohiroya/turbowarp-extension-loader/packager-page": [
+        "./src/packager-page.ts"
       ]
     }
   },

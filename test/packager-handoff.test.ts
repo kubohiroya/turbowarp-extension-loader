@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Zip from '@turbowarp/jszip';
-import {createProjectPackager} from '../dist/packager-handoff.js';
+import {createProjectPackager} from '@kubohiroya/turbowarp-extension-loader/packager-handoff';
 function fixture(readProject = async () => true) {
     const transfers: unknown[] = [];
     const popup = {closed: false, location: {href: ''}, close() {this.closed=true;}, postMessage(...args: unknown[]) {transfers.push(args);}};

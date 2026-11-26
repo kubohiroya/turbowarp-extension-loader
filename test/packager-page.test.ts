@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {JSDOM} from 'jsdom';
 import {createRequire} from 'node:module';
 import Zip from '@turbowarp/jszip';
-import {mountPackagerPage} from '../dist/packager-page.js';
+import {mountPackagerPage} from '@kubohiroya/turbowarp-extension-loader/packager-page';
 const {Packager}=createRequire(import.meta.url)('@turbowarp/packager');
 const tick=()=>new Promise(resolve=>setTimeout(resolve,5));
 function fixture() {

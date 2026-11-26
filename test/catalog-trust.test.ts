@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {createTrustedCatalog, listTrustedDigests} from '../dist/catalog-trust.js';
+import {createTrustedCatalog, listTrustedDigests} from '@kubohiroya/turbowarp-extension-loader/catalog-trust';
 import {parseExtensionCatalog} from '@kubohiroya/turbowarp-extension-security-dialog';
 const createPlusTrustedCatalog = (options: Omit<Parameters<typeof createTrustedCatalog>[0], 'parseCatalog'>) => createTrustedCatalog({...options, parseCatalog: parseExtensionCatalog});
 
