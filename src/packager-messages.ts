@@ -1,6 +1,6 @@
 /**
  * The words of a page that packages a Plus project into one HTML file with this module.
- * The host owns the page's controls; the wording of each step belongs to the packager.
+ * The page's controls, state and wording belong to the packager; hosts supply execution ports.
  */
 
 const ja = (locale: string | undefined) => /^ja(?:-|$)/i.test(locale || '');
