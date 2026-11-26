@@ -14,6 +14,7 @@ import {
 
 import {withProjectSerialization} from './serialization-context.js';
 import {createProjectAddresser} from './project-address.js';
+import {DEFAULT_LOADER_LIMITS} from '../limits.js';
 
 import type {AuthoringPorts} from '../project-authoring.js';
 import type {LoaderOptions, DiagnosticEvent, ExtensionSpec, ResolvedCode} from '../index.js';
@@ -254,22 +255,35 @@ export const createExtensionAuthoringController = (vm: ScratchVM, {
             if (!sha256Pattern.test(sha256) || (previousSHA256 !== undefined && !sha256Pattern.test(previousSHA256))) {
                 return Promise.reject(failure('INVALID_ADDITION', 'A development build requires exact SHA-256 values'));
             }
+            const bytes = build.bytes;
+            if (!(bytes instanceof Uint8Array) || bytes.byteLength < 1 ||
+                bytes.byteLength > (loaderOptions?.maxBytes ?? DEFAULT_LOADER_LIMITS.maxBytes)) {
+                return Promise.reject(failure('INVALID_BYTES', 'The development build is empty or exceeds the byte limit'));
+            }
             const approval = {id, sha256, previousSHA256, previousInterface: undefined as string | undefined};
             const request = {id, execution: 'sandboxed' as const, source: {type: 'embedded-file' as const},
-                bytes: new Uint8Array(build.bytes)};
+                bytes: new Uint8Array(bytes)};
             return this.apply(request, options, async (input: unknown, candidate: typeof request, authoringPorts: AuthoringPorts,
                 preparation: Parameters<typeof prepareExtensionAddition>[3]) => {
-                if (!(await authorize(Object.freeze({id, sha256, previousSHA256}))) || preparation.signal?.aborted) {
-                    throw failure('DEVELOPMENT_BUILD_DENIED', 'The Desktop session did not authorize this build');
-                }
-                if (previousSHA256 !== undefined) {
-                    approval.previousInterface = ports?.registrar?.sandboxedInterface(id);
-                    if (approval.previousInterface === undefined) {
-                        throw failure('DEVELOPMENT_BUILD_CHANGED', 'The previous development build is no longer registered');
+                const developmentBuild = {
+                    sha256, previousSHA256,
+                    async authorize(_spec: ExtensionSpec, signal: AbortSignal) {
+                        if (previousSHA256 !== undefined) {
+                            approval.previousInterface = ports?.registrar?.sandboxedInterface(id);
+                            if (approval.previousInterface === undefined) {
+                                throw failure('DEVELOPMENT_BUILD_CHANGED', 'The previous development build is no longer registered');
+                            }
+                        }
+                        if (signal.aborted || !(await authorize(Object.freeze({id, sha256, previousSHA256}))) || signal.aborted) {
+                            throw failure('DEVELOPMENT_BUILD_DENIED', 'The Desktop session did not authorize this build');
+                        }
+                        if (previousSHA256 !== undefined && approval.previousInterface !== ports?.registrar?.sandboxedInterface(id)) {
+                            throw failure('DEVELOPMENT_BUILD_CHANGED', 'The previous development build changed during approval');
+                        }
+                        approvedBuild = approval;
                     }
-                }
-                approvedBuild = approval;
-                return prepareExtensionAddition(input, candidate, authoringPorts, {...preparation, developmentBuild: approval});
+                };
+                return prepareExtensionAddition(input, candidate, authoringPorts, {...preparation, developmentBuild});
             }, () => {
                 const archive = vm._saveProjectZip();
                 archive.file('project.json', vm.toJSON(undefined, {allowOptimization: false}));
