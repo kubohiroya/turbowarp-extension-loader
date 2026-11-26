@@ -401,3 +401,8 @@ Editor 独自実装の移管元とライセンス確認は [EDITOR-MIGRATION.md]
 
 `./scratch-vm/extension-host` は UI とレビューの接続を受け取り、承認状態・信頼・VM ホストのライフサイクルを所有します。
 `./scratch-vm/project-size-gate` は通常上限と許可後の上限の間にある作品を判定し、呼び出しごとに同意を確認します。上限値と確認 UI はホストが渡します。
+
+
+### HTML出力とカタログ信頼（0.16.3）
+
+`./packager-page・./packager-handoff・./catalog-trust` が画面のDOM/CSS/文言、入力・生成・ダウンロードURL、同一origin/sourceの一回限り転送、カタログのキャッシュとダイジェスト照合を担当します。配布元の値とnativeコールバックを渡して使用します。由来・依存順・切り戻しは [移管記録](EDITOR-MIGRATION.md) を参照してください。
