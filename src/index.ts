@@ -59,6 +59,8 @@ export interface ExtensionSpec {
     readonly publisher?: string;
     readonly capabilities: readonly string[];
     readonly dependencies: readonly string[];
+    /** Requires the matching versioned SB3 sidecar; older readers reject this unknown field. */
+    readonly artifactLockFormatVersion?: 1;
 }
 export interface Manifest {
     readonly schemaVersion: 1;
@@ -251,13 +253,17 @@ export function validateManifest(input: unknown, options: Pick<LoaderOptions, 'm
     if (!Array.isArray(input.extensions) || input.extensions.length > maxExtensions) fail('INVALID_MANIFEST', 'Invalid extension list');
     const ids = new Set<string>();
     const extensions = input.extensions.map((spec: unknown): ExtensionSpec => {
-        keys(spec, ['id', 'source', 'execution', 'sha256', 'version', 'publisher', 'capabilities', 'dependencies'], 'extension');
+        keys(spec, ['id', 'source', 'execution', 'sha256', 'version', 'publisher', 'capabilities', 'dependencies', 'artifactLockFormatVersion'], 'extension');
         // A rejected ID is reported as supplied, even when it is not a string.
         if (!validId(spec.id) || ids.has(spec.id)) fail('INVALID_ID', 'Invalid, reserved, or duplicate extension ID', spec.id as string);
         ids.add(spec.id);
         if (!executionMode(spec.execution)) fail('INVALID_EXECUTION', 'An explicit sandboxed or unsandboxed request is required', spec.id);
         if (typeof spec.sha256 !== 'string' || !SHA256.test(spec.sha256)) fail('INVALID_DIGEST', 'A lowercase SHA-256 pin is required', spec.id);
         const result: Partial<Mutable<ExtensionSpec>> = {id: spec.id, source: sourceOf(spec.source), execution: spec.execution, sha256: spec.sha256};
+        if (spec.artifactLockFormatVersion !== undefined) {
+            if (spec.artifactLockFormatVersion !== 1) fail('UNSUPPORTED_SCHEMA', 'Unsupported extension artifact lock version', spec.id);
+            result.artifactLockFormatVersion = 1;
+        }
         for (const key of ['version', 'publisher'] as const) if (spec[key] !== undefined) result[key] = string(spec[key], key);
         for (const key of ['capabilities', 'dependencies'] as const) {
             const values = spec[key] ?? [];

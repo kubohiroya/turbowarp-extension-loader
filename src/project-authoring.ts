@@ -5,8 +5,10 @@ import {readPreparedProject} from './project-data.js';
 import {collectVerifiedCodes} from './verified-code.js';
 import {DEFAULT_LOADER_LIMITS} from './limits.js';
 import {markFetchRejection} from './fetch-rejection.js';
+import {copyArtifactLock, updateArtifactLock} from './artifact-locks.js';
+import type {ExtensionArtifactLock} from '@kubohiroya/sb3-toolchain/web-distribution';
 
-export type ExtensionAdditionRequest = {
+export type ExtensionAdditionRequest = ({
     id: string;
     execution?: ExecutionMode;
     source: {type: 'embedded-file'; path?: string; url?: string};
@@ -17,7 +19,7 @@ export type ExtensionAdditionRequest = {
     execution?: ExecutionMode;
     source: {type: 'remote-non-cacheable' | 'remote-cacheable'; url: string};
     bytes?: never;
-};
+}) & {artifactLock?: ExtensionArtifactLock};
 export type AuthoringPorts = Pick<LoaderPorts, 'fetcher' | 'trustProvider' | 'cache' | 'diagnostics'>;
 export interface ExtensionAdditionOptions {
     zip: ZipConstructor;
@@ -73,7 +75,7 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
     zip: Zip, signal: externalSignal, loaderOptions = {}, archiveOptions, uri, developmentBuild
 }: Partial<ExtensionAdditionOptions> = {}): Promise<PreparedExtensionAddition> {
     if (typeof Zip !== 'function' || typeof Zip.loadAsync !== 'function') throw new TypeError('A compatible JSZip constructor is required');
-    if (!plainObject(request) || Object.keys(request).some(key => !['id', 'source', 'bytes', 'execution', 'version'].includes(key))) {
+    if (!plainObject(request) || Object.keys(request).some(key => !['id', 'source', 'bytes', 'execution', 'version', 'artifactLock'].includes(key))) {
         fail('INVALID_ADDITION', 'An extension ID and file or URL source are required');
     }
     if (typeof ports?.trustProvider?.authorize !== 'function') fail('INVALID_PORT', 'An explicit host trust provider is required');
@@ -96,6 +98,7 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         fail('INVALID_BYTES', 'Extension file is empty or exceeds the byte limit', draft.id);
     }
     const suppliedBytes = request.bytes instanceof Uint8Array ? new Uint8Array(request.bytes) : request.bytes;
+    const suppliedLock = copyArtifactLock(request.artifactLock, draft.id);
     if (draft.source.type === 'embedded-file' && !(suppliedBytes instanceof Uint8Array) && !(suppliedBytes instanceof Blob)) {
         fail('INVALID_BYTES', 'Embedded additions require a JavaScript file', draft.id);
     }
@@ -178,8 +181,10 @@ export async function prepareExtensionAddition(input: unknown, request: unknown,
         const verified = new Uint8Array(bytes);
         const sha256 = await wait(() => digest(verified));
         if (developmentBuild && developmentBuild.sha256 !== sha256) fail('DIGEST_MISMATCH', 'The development build bytes changed', draft.id);
-        const manifest = validateManifest({schemaVersion: 1, ...carried, extensions: withSpec({...draft, sha256})}, loaderOptions);
+        const manifest = validateManifest({schemaVersion: 1, ...carried, extensions: withSpec({...draft, sha256,
+            ...(suppliedLock === undefined ? {} : {artifactLockFormatVersion: 1 as const})})}, loaderOptions);
         const spec = manifest.extensions.find(item => item.id === draft.id)!;
+        updateArtifactLock(files, spec, suppliedLock, verified);
         project.turboWarpPlus = manifest;
         if (!(project.extensions || []).includes(spec.id)) project.extensions = [...(project.extensions || []), spec.id];
         files['project.json'] = encoder.encode(JSON.stringify(project));

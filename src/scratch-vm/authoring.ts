@@ -20,6 +20,8 @@ import type {AuthoringPorts} from '../project-authoring.js';
 import type {LoaderOptions, DiagnosticEvent, ExtensionSpec, ResolvedCode} from '../index.js';
 import type {ZipConstructor} from '../project-codec.js';
 import type {ScratchVM} from './vm.js';
+import type {ExtensionArtifactLock} from '@kubohiroya/sb3-toolchain/web-distribution';
+import {copyArtifactLock} from '../artifact-locks.js';
 
 // The preparation functions and their results belong to the Loader's authoring and catalog modules,
 // which this controller hands through without reading their insides.
@@ -249,7 +251,7 @@ export const createExtensionAuthoringController = (vm: ScratchVM, {
         add (request: Port, options?: ApplyOptions) {
             return this.apply(request, options);
         },
-        applyDevelopmentBuild (build: DevelopmentBuild & {bytes: Uint8Array},
+        applyDevelopmentBuild (build: DevelopmentBuild & {bytes: Uint8Array; artifactLock?: ExtensionArtifactLock},
             authorize: (build: Readonly<DevelopmentBuild>) => Promise<boolean>, options?: ApplyOptions) {
             const {id, sha256, previousSHA256} = build;
             if (!sha256Pattern.test(sha256) || (previousSHA256 !== undefined && !sha256Pattern.test(previousSHA256))) {
@@ -261,8 +263,11 @@ export const createExtensionAuthoringController = (vm: ScratchVM, {
                 return Promise.reject(failure('INVALID_BYTES', 'The development build is empty or exceeds the byte limit'));
             }
             const approval = {id, sha256, previousSHA256, previousInterface: undefined as string | undefined};
+            let artifactLock: ExtensionArtifactLock | undefined;
+            try { artifactLock = copyArtifactLock(build.artifactLock, id); }
+            catch (error) { return Promise.reject(error); }
             const request = {id, execution: 'sandboxed' as const, source: {type: 'embedded-file' as const},
-                bytes: new Uint8Array(bytes)};
+                bytes: new Uint8Array(bytes), ...(artifactLock === undefined ? {} : {artifactLock})};
             return this.apply(request, options, async (input: unknown, candidate: typeof request, authoringPorts: AuthoringPorts,
                 preparation: Parameters<typeof prepareExtensionAddition>[3]) => {
                 const developmentBuild = {

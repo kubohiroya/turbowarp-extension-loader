@@ -166,5 +166,8 @@
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
+  },
+  "dependencies": {
+    "@kubohiroya/sb3-toolchain": "0.31.3"
   }
 }

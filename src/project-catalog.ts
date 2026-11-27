@@ -5,6 +5,7 @@ import {readPreparedProject} from './project-data.js';
 import {collectVerifiedCodes} from './verified-code.js';
 import {DEFAULT_LOADER_LIMITS, DEFAULT_TOTAL_BYTES} from './limits.js';
 import {markFetchRejection} from './fetch-rejection.js';
+import {reconcileArtifactLocks} from './artifact-locks.js';
 
 export interface CatalogExtensionRequest {
     id: string;
@@ -198,6 +199,8 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
             extensions.set(choice.id, {id: choice.id, source, execution: choice.execution, sha256,
                 ...((old?.version || choice.version) ? {version: old?.version || choice.version} : {}),
                 ...(old?.publisher ? {publisher: old.publisher} : {}),
+                ...(old?.artifactLockFormatVersion === 1 && old.sha256 === sha256 && old.execution === choice.execution ?
+                    {artifactLockFormatVersion: 1 as const} : {}),
                 capabilities: old?.capabilities || [], dependencies: choice.dependencies});
         }
         // The project's own address survives a change to its extensions. Rebuilding the manifest
@@ -209,6 +212,7 @@ export async function prepareCatalogExtensionChanges(input: unknown, requests: C
             extensions: [...extensions.values()]}, loaderOptions);
         for (const spec of manifest.extensions) if (spec.source.type === 'embedded-file') replacedPaths.delete(spec.source.path);
         for (const path of replacedPaths) delete files[path];
+        reconcileArtifactLocks(files, manifest);
         project.turboWarpPlus = manifest;
         project.extensions = [...new Set([...(project.extensions || []), ...manifest.extensions.map(spec => spec.id)])];
         const urls = {...(project.extensionURLs || {})};

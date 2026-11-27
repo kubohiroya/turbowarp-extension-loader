@@ -4,6 +4,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {createHash} from 'node:crypto';
+import {buildLock} from '../artifact-lock-fixture.ts';
 import Zip from '@turbowarp/jszip';
 import {createExtensionAuthoringController} from '@kubohiroya/turbowarp-extension-loader/scratch-vm';
 const spec = {id: 'example', sha256: 'a'.repeat(64)};
@@ -218,6 +219,25 @@ test('development authoring verifies bytes before approval, then still requires 
     } finally {
         controller.dispose();
     }
+});
+
+test('development authoring snapshots provenance without forwarding session approval into the saved lock', async () => {
+    const {controller, events, loads} = developmentFixture();
+    try {
+        const candidate = developmentCandidate();
+        const lock = buildLock(candidate.id, candidate.bytes);
+        const expected = structuredClone(lock);
+        const pending = controller.applyDevelopmentBuild({...candidate, artifactLock: lock}, async () => {
+            events.push('desktop-session'); return true;
+        });
+        (lock as {bundleSHA256: string}).bundleSHA256 = '0'.repeat(64);
+        await pending;
+        const zip = await Zip.loadAsync(loads[0]!);
+        const saved = JSON.parse(await zip.file('tw-plus/extension-locks.json')!.async('string'));
+        assert.deepEqual(saved, {formatVersion: 1, extensions: [{id: candidate.id, artifactLock: expected}]});
+        assert.deepEqual(events, ['desktop-session', 'digest-trust', 'load']);
+        assert.equal(JSON.stringify(saved).includes('desktop-session'), false);
+    } finally { controller.dispose(); }
 });
 
 test('a replacement project cancels pending session approval without permitting late registration', async () => {
