@@ -2,6 +2,8 @@
 
 [English](README.md) | 日本語
 
+成果物の出所記録を渡す追加 API と対応 SB3 の保存契約は [成果物 lock](docs/artifact-locks.ja.md) を参照してください。
+
 [Editor Issue #4](https://github.com/kubohiroya/turbowarp-plus-editor/issues/4) の GUI 非依存コアです。独立Gitリポジトリで管理し、`@kubohiroya/turbowarp-extension-loader` として npm に MPL-2.0 で公開しています。既存の配布ライブラリや npm パッケージを置き換えません。
 
 ```sh
