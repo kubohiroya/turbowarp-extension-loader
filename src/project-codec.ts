@@ -1,6 +1,7 @@
 import {discoverManifest, LoaderError, validateManifest, type Manifest} from './index.js';
 import type {ProjectJSON} from './project-data.js';
 import {DEFAULT_ENTRY_BYTES, DEFAULT_PROJECT_JSON_BYTES, DEFAULT_TOTAL_BYTES} from './limits.js';
+import {artifactLocksEntry, validateArtifactLocks} from './artifact-locks.js';
 
 export interface ArchiveLimits {
     maxArchiveBytes?: number;
@@ -356,6 +357,7 @@ export function createProjectIO({zip: Zip, ...options}: ArchiveLimits & {zip?: Z
             }
             cancelled(signal);
             const manifest = discoverManifest(project);
+            validateArtifactLocks(files, manifest);
             if (!manifest) return {manifest: null, input, context: null,
                 ...(originalArchive && {originalArchive, vmArchive: originalArchive})};
             // A manifest is only discovered on a plain object; the fields used below are checked first.
@@ -417,7 +419,8 @@ export function createProjectIO({zip: Zip, ...options}: ArchiveLimits & {zip?: Z
             const state = get(context);
             if (!state) return files;
             const result = {...files};
-            for (const [name, bytes] of state.files) if (name !== 'project.json' && (!Object.hasOwn(result, name) || name.startsWith('extensions/'))) Object.defineProperty(result, name, {value: new Uint8Array(bytes), writable: true, configurable: true, enumerable: true});
+            if (Object.hasOwn(result, artifactLocksEntry) && !state.files.has(artifactLocksEntry)) throw new LoaderError('INVALID_ARTIFACT_LOCK', 'Unverified artifact lock in serialized files');
+            for (const [name, bytes] of state.files) if (name !== 'project.json' && (!Object.hasOwn(result, name) || name.startsWith('extensions/') || name === artifactLocksEntry)) Object.defineProperty(result, name, {value: new Uint8Array(bytes), writable: true, configurable: true, enumerable: true});
             if (!(result['project.json'] instanceof Uint8Array)) throw new TypeError('Serialized files need project.json bytes');
             result['project.json'] = encoder.encode(restoreJSON(decoder.decode(result['project.json']), context));
             return result;
@@ -426,7 +429,8 @@ export function createProjectIO({zip: Zip, ...options}: ArchiveLimits & {zip?: Z
             const state = get(context);
             if (!state) return archive;
             // The GUI toJSON hook has already restored project.json synchronously.
-            for (const [name, bytes] of state.files) if (name !== 'project.json' && (!archive.file(name) || name.startsWith('extensions/'))) archive.file(name, new Uint8Array(bytes), {dir: name.endsWith('/'), createFolders: false});
+            if (archive.file(artifactLocksEntry) && !state.files.has(artifactLocksEntry)) throw new LoaderError('INVALID_ARTIFACT_LOCK', 'Unverified artifact lock in serialized archive');
+            for (const [name, bytes] of state.files) if (name !== 'project.json' && (!archive.file(name) || name.startsWith('extensions/') || name === artifactLocksEntry)) archive.file(name, new Uint8Array(bytes), {dir: name.endsWith('/'), createFolders: false});
             return archive;
         },
         assignProjectURI(context: ProjectContext, uri: string, {replace = false}: {replace?: boolean} = {}): ProjectContext {
