@@ -173,6 +173,35 @@ Because there is no record of who put an entry there, releasing a project means 
 digests **that project names** — which may evict bytes another project would have reused. That
 costs a fetch and nothing else, but a list shown to a person should not claim more than that.
 
+### What a project calls an entry, for a management screen
+
+A digest says nothing a person can recognise, so a host may record what each project calls the
+bytes it claims: a reference inside the project, its kind, a display name, the address it came from
+and the project's own title. The labels sit in a second database, `<databaseName>-labels`, so the
+content database keeps its version, a tab still running an older Loader opens it as before, and no
+stored bytes are discarded to add them. An entry stored before labels existed is listed with none.
+
+```js
+await cache.put(digest, bytes, {label: {ref: 'costume:cat', kind: 'costume', name: 'cat.svg', url}});
+await cache.describe(digest, [{ref: 'extension:alpha', kind: 'extension', name: 'Alpha'}]);
+
+const entries = await cache.listEntries();  // one row per stored copy, with every claim and label
+await cache.releaseClaims([{bucket: uri, key: digest}, {bucket: other, key: digest}]);
+```
+
+- One copy can carry many labels: one per bucket, digest and `ref`. Recording the same `ref` again
+  replaces it, and a label is recorded only while that bucket still claims the digest.
+- `entry.bytes` is the size of the one stored copy. Add those up for what the cache occupies; adding
+  per claim would count a shared copy once per project.
+- A recorded URL never keeps credentials, a query or a fragment. When any was removed the label says
+  `urlRedacted: true`, and it is not a shareable source.
+- Everything in a label is the project's own claim. It is display data, never evidence that two
+  entries are the same content and never a reason to run, keep or delete anything. The projects
+  listed are the ones this browser profile observed, not every project that uses the bytes.
+- `releaseClaims` releases any set of claims across buckets in one transaction, with the rule above,
+  and takes their labels. A claim that is already gone counts as nothing released, so the result is
+  what actually happened even when the list shown was stale.
+
 ## Where an extension's bytes come from
 
 The family holds anything — extensions included — in one of four forms, and the author of the

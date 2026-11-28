@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `./indexeddb-cache` records what each project calls the bytes it claims, for a cache management
+  screen (#902 of turbowarp-plus-editor). `put` takes an optional `label`, `describe` records labels
+  on an existing claim, `listEntries` lists each stored copy once with every claim and label, and
+  `releaseClaims` releases any set of claims across buckets in one transaction. Labels live in a
+  separate `<databaseName>-labels` database: the content database stays at version 2, so an older
+  Loader still opens it and no stored bytes are discarded. URLs are kept without credentials, query
+  or fragment.
+
 - `./packager` adds `configurePlusPackager` and `packagePlusHTML`, which write a project as one offline HTML with the actual TurboWarp Packager. They moved from the TurboWarp Plus Editor with their tests. The archive limits are now a required `archiveOptions` option; the Editor passed its own 64 MiB limits implicitly.
 - `./shared-project-archive` lets a Loader build share its verified SB3 read with the host. It moved from the Editor with its test.
 

@@ -162,3 +162,104 @@ test('an appURI that is neither a string nor a function is rejected', async () =
     await assert.rejects(cache.put(digestOf('a'), bytesOf('one')), /appURI/);
     await cache.close();
 });
+
+const one = 'https://example.test/p/one.sb3';
+const two = 'https://example.test/p/two.sb3';
+/** Two caches over one database, as two projects opened one after the other would see it. */
+function sharedDatabase() {
+    const factory = new IDBFactory() as unknown as IDBFactory;
+    const databaseName = `test-${database++}`;
+    return (uri?: string) => createIndexedDBContentCache({indexedDB: factory, databaseName, ...(uri ? {appURI: uri} : {})});
+}
+
+test('one stored copy lists every project, name and address that refers to it', async () => {
+    const open = sharedDatabase();
+    const first = open(one);
+    await first.put(digestOf('a'), bytesOf('a cat'), {label: {ref: 'costume:cat', kind: 'costume', name: 'cat.svg',
+        url: 'https://assets.example.test/cat.svg', projectName: 'One'}});
+    await first.close();
+    const second = open(two);
+    await second.put(digestOf('a'), bytesOf('a cat'), {label: {ref: 'backdrop:wall', kind: 'backdrop', name: 'wall',
+        url: 'https://user:secret@assets.example.test/wall.svg?token=abc#x'}});
+    const [entry, ...rest] = await second.listEntries();
+    assert.equal(rest.length, 0, 'one copy, listed once');
+    assert.equal(entry!.key, digestOf('a'));
+    assert.equal(entry!.bytes, (await second.getSize()).bytes, 'its size counts the copy once');
+    assert.deepEqual(entry!.claims.map(claim => claim.bucket).sort(), [one, two]);
+    const labels = new Map(entry!.labels.map(label => [label.bucket, label]));
+    assert.deepEqual({...labels.get(one), observedAt: 0}, {bucket: one, ref: 'costume:cat', kind: 'costume',
+        name: 'cat.svg', projectName: 'One', url: 'https://assets.example.test/cat.svg', observedAt: 0});
+    // A credential or a one-time token is never stored, and the address says it was cut.
+    assert.equal(labels.get(two)!.url, 'https://assets.example.test/wall.svg');
+    assert.equal(labels.get(two)!.urlRedacted, true);
+    await second.close();
+});
+
+test('labels are recorded only where the project still claims the bytes', async () => {
+    const cache = realCache({appURI: one});
+    await cache.put(digestOf('a'), bytesOf('one'));
+    assert.equal(await cache.describe(digestOf('a'), [{ref: 'sound:pop', kind: 'sound', name: 'pop'}]), 1);
+    assert.equal(await cache.describe(digestOf('a'), {ref: 'sound:pop', name: 'pop 2'}), 1, 'the same ref is replaced');
+    assert.equal(await cache.describe(digestOf('c'), {ref: 'sound:pop'}), 0, 'nothing is claimed, nothing recorded');
+    assert.equal(await cache.describe(digestOf('a'), {ref: 'x'}, {bucket: two}), 0, 'another project does not claim it');
+    const [entry] = await cache.listEntries();
+    assert.deepEqual(entry!.labels.map(label => [label.ref, label.name, label.kind]), [['sound:pop', 'pop 2', undefined]]);
+    await assert.rejects(cache.describe(digestOf('a'), {ref: 'x', kind: 'script' as never}), /kind/);
+    await assert.rejects(cache.put(digestOf('c'), bytesOf('two'), {label: {} as never}), /ref/);
+    assert.equal((await cache.getSize()).entries, 1, 'an invalid label stops the write before it starts');
+    await cache.close();
+});
+
+test('an entry stored before labels existed is listed with none', async () => {
+    const open = sharedDatabase();
+    const before = open(one);
+    await before.put(digestOf('a'), bytesOf('old'));
+    await before.close();
+    const after = open(one);
+    const [entry] = await after.listEntries();
+    assert.deepEqual(entry!.labels, []);
+    assert.deepEqual(entry!.claims.map(claim => claim.bucket), [one]);
+    await after.close();
+});
+
+test('claims across projects are released together, and bytes go with the last one', async () => {
+    const open = sharedDatabase();
+    const first = open(one);
+    await first.put(digestOf('a'), bytesOf('both'), {label: {ref: 'a'}});
+    await first.put(digestOf('c'), bytesOf('only one'), {label: {ref: 'c'}});
+    await first.close();
+    const second = open(two);
+    await second.put(digestOf('a'), bytesOf('both'), {label: {ref: 'a'}});
+
+    const partial = await second.releaseClaims([{bucket: one, key: digestOf('a')}, {bucket: one, key: digestOf('a')}]);
+    assert.deepEqual(partial, {released: 1, freed: 0}, 'the other project still refers to the copy');
+    const shared = (await second.listEntries()).find(entry => entry.key === digestOf('a'))!;
+    assert.deepEqual(shared.labels.map(label => label.bucket), [two], 'the released claim takes its label');
+
+    const rest = await second.releaseClaims([
+        {bucket: two, key: digestOf('a')},
+        {bucket: one, key: digestOf('c')},
+        {bucket: one, key: digestOf('a')} // already gone: counted as nothing
+    ]);
+    assert.equal(rest.released, 2);
+    assert.ok(rest.freed > 0);
+    assert.deepEqual(await second.listEntries(), []);
+    await assert.rejects(second.releaseClaims([{bucket: '', key: digestOf('a')}]), /bucket/);
+    await second.close();
+});
+
+test('releasing a whole project takes its labels and leaves the content database at its version', async () => {
+    const factory = new IDBFactory() as unknown as IDBFactory;
+    const databaseName = `test-${database++}`;
+    const cache = createIndexedDBContentCache({indexedDB: factory, databaseName, appURI: one});
+    await cache.put(digestOf('a'), bytesOf('one'), {label: {ref: 'a', name: 'A'}});
+    await cache.deleteBucket(one);
+    await cache.put(digestOf('a'), bytesOf('one'));
+    const [entry] = await cache.listEntries();
+    assert.deepEqual(entry!.labels, [], 'a new claim does not bring back the old label');
+    await cache.close();
+    // A tab still running an older Loader opens the content database at the version it knows.
+    const versions = new Map((await factory.databases()).map(info => [info.name, info.version]));
+    assert.equal(versions.get(databaseName), 2);
+    assert.equal(versions.get(`${databaseName}-labels`), 1);
+});
